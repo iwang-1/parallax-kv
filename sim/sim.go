@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"math/rand"
 
+	"github.com/anishathalye/porcupine"
+
 	"github.com/iwang-1/parallax-kv/raft"
 	"github.com/iwang-1/parallax-kv/sim/lin"
 )
@@ -321,6 +323,26 @@ func (s *Simulator) TraceHash() string { return s.rec.hash() }
 // History returns the client operation history for linearizability
 // checking (invoke/return pairs stamped with virtual times).
 func (s *Simulator) History() *lin.History { return s.hist }
+
+// CheckLinearizability runs Porcupine over the recorded client history and
+// reports whether it admits a valid linearization of the KV state machine.
+// It is the end-of-run consistency assertion every real-core run makes: the
+// per-step invariants prove the replicas agree on an applied log, and this
+// proves the client-observed results are consistent with SOME single-copy
+// serial execution — the actual definition of linearizability.
+//
+// It returns nil when a linearization exists (porcupine.Ok) or when the
+// bounded search is inconclusive (porcupine.Unknown — a timeout, not a
+// violation). It returns a replay-tagged error only on porcupine.Illegal: a
+// genuine consistency bug, for which no linearization exists. On a violation
+// the error carries the REPLAY command so the failing run reproduces exactly.
+func (s *Simulator) CheckLinearizability() error {
+	res, _ := lin.Check(s.hist)
+	if res == porcupine.Illegal {
+		return s.withReplay(fmt.Errorf("linearizability violated: client history admits no valid linearization of the kv state machine"))
+	}
+	return nil
+}
 
 // recordControl records a control-plane event (fault injection) into the
 // trace at the current virtual time.

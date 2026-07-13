@@ -87,7 +87,16 @@ func TestSmokeElectAndReplicate(t *testing.T) {
 	if len(ops) == 0 {
 		t.Fatal("real core completed zero client operations")
 	}
-	t.Logf("leader elected, %d entries applied, %d client ops completed, %d trace events",
+
+	// (4) The client-observed history is linearizable: Porcupine finds a
+	// valid single-copy serialization of every completed operation. This is
+	// the end-to-end correctness assertion — the per-step invariants proved
+	// the replicas agree, this proves what clients saw is consistent with a
+	// serial execution of the KV spec.
+	if err := s.CheckLinearizability(); err != nil {
+		t.Fatalf("linearizability check failed: %v", err)
+	}
+	t.Logf("leader elected, %d entries applied, %d client ops completed (linearizable), %d trace events",
 		maxApplied, len(ops), len(s.Trace()))
 }
 
@@ -122,5 +131,30 @@ func TestSmokeDeterminism(t *testing.T) {
 			t.Fatalf("seed 0x%x: no client operations completed (would make the gate vacuous)", seed)
 		}
 		t.Logf("seed 0x%x: deterministic (hash %s..., %d ops)", seed, h1[:12], n1)
+	}
+}
+
+// TestSmokeLinearizableBatch runs the real core over a small batch of seeds
+// and asserts every run's client history is linearizable AND that the run
+// completed no invariant violation. This is the correctness-checking layer's
+// headline: per-step safety invariants prove the replicas never diverge, and
+// the end-of-run Porcupine check proves the client-observed results admit a
+// single-copy serial execution of the KV spec. On any violation the failure
+// carries the REPLAY seed so it reproduces exactly.
+func TestSmokeLinearizableBatch(t *testing.T) {
+	for seed := uint64(0); seed < 12; seed++ {
+		s, err := New(smokeConfig(seed))
+		if err != nil {
+			t.Fatalf("seed 0x%x: New: %v", seed, err)
+		}
+		if err := s.RunUntil(4 * Second); err != nil {
+			t.Fatalf("seed 0x%x: invariant violation: %v", seed, err)
+		}
+		if err := s.CheckLinearizability(); err != nil {
+			t.Fatalf("seed 0x%x: %v", seed, err)
+		}
+		if got := len(s.History().Operations()); got == 0 {
+			t.Fatalf("seed 0x%x: no operations completed; linearizability check was vacuous", seed)
+		}
 	}
 }
