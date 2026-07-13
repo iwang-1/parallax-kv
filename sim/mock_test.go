@@ -190,3 +190,5 @@ func (m *mockNode) State() raft.StateType {
 }
 
 func (m *mockNode) Leader() uint64 { return m.leader }
+
+func (m *mockNode) Term() uint64 { return m.term }

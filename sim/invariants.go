@@ -177,14 +177,19 @@ func (iv *invariants) checkElectionSafety(nodes map[uint64]*nodeState) error {
 	return nil
 }
 
-// leaderTerm returns the term of the last entry the leader applied, a lower
-// bound on its current term that is enough to attribute leadership to a
-// term. Returns 0 when unknown.
+// leaderTerm returns the node's current raft term, the term it leads while in
+// StateLeader. It reads the node's own term directly (not the last-applied
+// entry's term, which lags: a leader elected in term T campaigns and wins
+// before it applies any term-T entry, so the applied term can still be T-1
+// while the node genuinely leads T). Election safety must key on the real
+// term, or a newly elected leader and the stale leader it replaced would be
+// mis-attributed to the same term and reported as a false violation. Returns
+// 0 when the node is not live.
 func leaderTerm(ns *nodeState) uint64 {
-	if n := len(ns.appliedLog); n > 0 {
-		return ns.appliedLog[n-1].term
+	if ns == nil || ns.crashed || ns.node == nil {
+		return 0
 	}
-	return 0
+	return ns.node.Term()
 }
 
 // checkAppliedPrefix asserts that no two nodes applied different entries at

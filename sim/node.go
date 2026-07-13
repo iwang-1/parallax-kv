@@ -19,6 +19,11 @@ type raftNode interface {
 	Advance(ack raft.PersistAck)
 	State() raft.StateType
 	Leader() uint64
+	// Term reports the node's current raft term. The invariant checker keys
+	// election safety on it: a leader's role is only meaningful paired with
+	// the term it leads, and the last-applied-entry term is a stale proxy (a
+	// freshly elected leader has not yet applied a current-term entry).
+	Term() uint64
 }
 
 // nodeFactory constructs a node from its raft.Config and durable storage.
