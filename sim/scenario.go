@@ -39,8 +39,7 @@ type Scenario struct {
 	arm func(s *Simulator)
 }
 
-// ScenarioNames lists the scenarios in a stable order. snapshot-under-partition
-// is intentionally absent here: it arrives with snapshot/compaction in S3.
+// ScenarioNames lists the scenarios in a stable order.
 var ScenarioNames = []string{
 	"partition-leader",
 	"partition-random-half",
@@ -48,6 +47,7 @@ var ScenarioNames = []string{
 	"30pct-loss",
 	"dup+delay",
 	"mixed-chaos",
+	"snapshot-under-partition",
 }
 
 // scenarios is the registry keyed by name.
@@ -95,6 +95,15 @@ var scenarios = map[string]Scenario{
 			c.Net.DelayMax = 20 * Millisecond
 		},
 		arm: armMixedChaos,
+	},
+	"snapshot-under-partition": {
+		Name: "snapshot-under-partition",
+		config: func(c *Config) {
+			// Aggressive compaction so the majority discards a log prefix
+			// while a minority is isolated, forcing an InstallSnapshot on heal.
+			c.SnapshotEntries = 16
+		},
+		arm: armSnapshotUnderPartition,
 	},
 }
 
@@ -177,6 +186,22 @@ func (s *Simulator) liveLeader() uint64 {
 			continue
 		}
 		if ns.node.State() == raft.StateLeader {
+			return id
+		}
+	}
+	return 0
+}
+
+// aLiveFollower returns the id of some live node that is not the current
+// leader, or 0 if none. Iterates peers in ascending order (deterministic).
+func (s *Simulator) aLiveFollower() uint64 {
+	lead := s.liveLeader()
+	for _, id := range s.peers {
+		ns := s.nodes[id]
+		if ns == nil || ns.crashed || ns.node == nil {
+			continue
+		}
+		if id != lead {
 			return id
 		}
 	}
@@ -347,4 +372,43 @@ func armMixedChaos(s *Simulator) {
 	}
 
 	s.scheduleFault(s.drawDur(300*Millisecond, 700*Millisecond), partitionCycle)
+}
+
+// armSnapshotUnderPartition isolates a single follower into a minority
+// partition and holds it there for a LONG window while the majority keeps
+// committing and compacting (SnapshotEntries is small in this scenario's
+// config). By the time the partition heals, the majority has discarded — into
+// its snapshot — the very entries the isolated node still needs, so the
+// rejoining node can only be caught up by an InstallSnapshot rather than an
+// AppendEntries. This is the snapshot flow under a realistic fault, not a hand
+// wired unit test. Only a minority is ever isolated, so the majority always
+// keeps a quorum and the workload never starves. The cycle repeats, isolating
+// a fresh follower each time.
+func armSnapshotUnderPartition(s *Simulator) {
+	var cycle func()
+	cycle = func() {
+		victim := s.aLiveFollower()
+		if victim == 0 {
+			// No follower distinct from a leader yet; retry shortly.
+			s.scheduleFault(s.drawDur(100*Millisecond, 300*Millisecond), cycle)
+			return
+		}
+		rest := make([]uint64, 0, len(s.peers)-1)
+		for _, id := range s.peers {
+			if id != victim {
+				rest = append(rest, id)
+			}
+		}
+		s.Partition([]uint64{victim}, rest)
+		// Hold long enough for the majority to commit and compact well past the
+		// isolated node's frontier (many multiples of SnapshotEntries).
+		hold := s.drawDur(1500*Millisecond, 2500*Millisecond)
+		s.scheduleFault(hold, func() {
+			s.Heal()
+			// After heal, give the InstallSnapshot catch-up time to complete
+			// before isolating the next follower.
+			s.scheduleFault(s.drawDur(500*Millisecond, 1000*Millisecond), cycle)
+		})
+	}
+	s.scheduleFault(s.drawDur(300*Millisecond, 700*Millisecond), cycle)
 }

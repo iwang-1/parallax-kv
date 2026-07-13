@@ -18,21 +18,6 @@ func countInstallSnapshot(trace []TraceEvent) int {
 	return n
 }
 
-// aLiveFollower returns the id of some live non-leader node, or 0.
-func (s *Simulator) aLiveFollower() uint64 {
-	lead := s.liveLeader()
-	for _, id := range s.peers {
-		ns := s.nodes[id]
-		if ns == nil || ns.crashed || ns.node == nil {
-			continue
-		}
-		if id != lead {
-			return id
-		}
-	}
-	return 0
-}
-
 // snapshotConfig is a low-fault config that enables aggressive compaction: a
 // small SnapshotEntries threshold so nodes snapshot and truncate their logs
 // repeatedly over a short run, exercising the compaction + restore path
@@ -238,6 +223,39 @@ func TestInstallSnapshotCatchUp(t *testing.T) {
 	}
 	t.Logf("follower %d caught up via InstallSnapshot: applied=%d, frontier=%d, %d InstallSnapshot deliveries",
 		victim, vns.applied, frontier, countInstallSnapshot(s.Trace()))
+}
+
+// TestSnapshotUnderPartitionUsesInstallSnapshot asserts that the
+// snapshot-under-partition nemesis scenario actually exercises the
+// InstallSnapshot flow: isolating a follower long enough for the majority to
+// compact past it means that on heal the follower can only be caught up by an
+// InstallSnapshot. If this ever stops holding (e.g. the hold window no longer
+// outlasts a compaction cycle) the scenario would silently degrade into a
+// plain minority partition, so we guard it explicitly. Also confirms the run
+// stays linearizable, which TestScenarioSmoke/Regression already cover but is
+// asserted here alongside the InstallSnapshot evidence for a self-contained
+// signal.
+func TestSnapshotUnderPartitionUsesInstallSnapshot(t *testing.T) {
+	saw := false
+	for _, seed := range []uint64{1, 2, 3, 7} {
+		s, err := NewScenario("snapshot-under-partition", seed)
+		if err != nil {
+			t.Fatalf("seed 0x%x: build: %v", seed, err)
+		}
+		if err := s.RunUntil(8 * Second); err != nil {
+			t.Fatalf("seed 0x%x: invariant violation: %v", seed, err)
+		}
+		if err := s.CheckLinearizability(); err != nil {
+			t.Fatalf("seed 0x%x: %v", seed, err)
+		}
+		if countInstallSnapshot(s.Trace()) > 0 {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Fatal("snapshot-under-partition never triggered an InstallSnapshot across the sampled seeds; " +
+			"the hold window may no longer outlast a compaction cycle")
+	}
 }
 
 // TestSnapshotDeterminism proves compaction did not leak nondeterminism: with
