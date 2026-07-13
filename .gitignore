@@ -1,0 +1,13 @@
+# Local toolchain (protoc + plugins); see docs/DEV_NOTES.md for versions.
+/.tools/
+
+# Build artifacts
+/bin/
+*.test
+*.out
+*.log
+
+# Editor droppings
+.idea/
+.vscode/
+*~
