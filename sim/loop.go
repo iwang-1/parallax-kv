@@ -156,7 +156,56 @@ func (s *Simulator) drain(ns *nodeState) {
 
 		// (4) Acknowledge.
 		ns.node.Advance(raft.PersistAck{})
+
+		// (5) Compact: once enough entries have been applied past the last
+		// snapshot, snapshot the state machine and truncate the covered log
+		// prefix. The core reads the log through LogStorage and tolerates a
+		// compacted prefix (falling back to InstallSnapshot for followers that
+		// need it), so this is purely a driver-side operation.
+		s.maybeCompact(ns)
 	}
+}
+
+// maybeCompact snapshots ns's state machine and truncates its log prefix once
+// the applied index has advanced Config.SnapshotEntries past the last
+// snapshot. It is deterministic (draws no randomness) and models a node
+// compacting its own durable log to bound its size. Compaction is best-effort:
+// a benign ErrCompacted race (a newer snapshot already installed) is ignored.
+func (s *Simulator) maybeCompact(ns *nodeState) {
+	if s.cfg.SnapshotEntries == 0 || ns.crashed || ns.sm == nil {
+		return
+	}
+	snap, err := ns.storage.Snapshot()
+	if err != nil {
+		s.fail(fmt.Errorf("node %d Snapshot(): %w", ns.id, err))
+		return
+	}
+	base := snap.Metadata.Index
+	if ns.applied <= base || ns.applied-base < s.cfg.SnapshotEntries {
+		return
+	}
+	// The applied index is committed and durable, so its term is available
+	// from storage (either as a live entry or the current snapshot boundary).
+	term, err := ns.storage.Term(ns.applied)
+	if err != nil {
+		// Applied entry not individually available yet (e.g. just covered by a
+		// freshly installed snapshot); skip this round.
+		return
+	}
+	data, err := ns.sm.Snapshot()
+	if err != nil {
+		s.fail(fmt.Errorf("node %d state-machine Snapshot(): %w", ns.id, err))
+		return
+	}
+	newSnap := raft.Snapshot{
+		Metadata: raft.SnapshotMetadata{Index: ns.applied, Term: term},
+		Data:     data,
+	}
+	if err := ns.storage.ApplySnapshot(newSnap); err != nil && err != raft.ErrCompacted {
+		s.fail(fmt.Errorf("node %d compaction ApplySnapshot: %w", ns.id, err))
+		return
+	}
+	s.recordControl("compact", ns.id, fmt.Sprintf("index=%d term=%d", ns.applied, term))
 }
 
 // applyEntry applies one committed entry to the node's state machine and

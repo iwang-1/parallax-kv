@@ -79,8 +79,14 @@ type Config struct {
 	HeartbeatTicks int
 	// TickEvery is the virtual duration between raft Ticks.
 	TickEvery VirtualTime
-	Net       NetworkConfig
-	Workload  WorkloadConfig
+	// SnapshotEntries triggers log compaction: once a node's applied index
+	// has advanced this many entries beyond its last snapshot, the driver
+	// snapshots the state machine, persists it, and truncates the covered log
+	// prefix. Zero disables compaction. The trigger draws no randomness, so a
+	// run stays a pure function of Seed.
+	SnapshotEntries uint64
+	Net             NetworkConfig
+	Workload        WorkloadConfig
 }
 
 // Verdict is a network hook's decision about one message.
