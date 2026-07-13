@@ -91,6 +91,17 @@ above.
   raft terms, the actual definition of the property) rather than weakening
   it. Verified: all six scenarios pass the 200-seed soak after the fix.
 
+## S3 snapshot work: 0 consensus bugs
+
+Adding snapshot compaction, log truncation + restore-on-restart, the
+leader→follower `InstallSnapshot` catch-up flow, and the
+`snapshot-under-partition` nemesis scenario surfaced **no** consensus bugs.
+The scenario regression corpus and the determinism double-run gate both pass
+with the new scenario included, and the fresh-seed soak re-run stayed green.
+The InstallSnapshot receive/send paths were already exercised by
+`raft/*_test.go`; S3 wired the driver-side compaction trigger and validated the
+flow end-to-end under a real partition fault without weakening any invariant.
+
 <!-- Entry template for a genuine consensus bug:
 ## N. <one-line title>
 - **Found**: <date>, scenario <name>, seed 0x<seed>

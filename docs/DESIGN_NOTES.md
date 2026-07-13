@@ -79,4 +79,49 @@ assumptions the algorithm does not make).
 - The simulator's event loop and fault model (S1/S2)
 - Linearizability checking: history recording and how WGL/Porcupine
   searches for a linearization (S2)
-- Snapshots and InstallSnapshot (S3)
+
+## Snapshots, compaction, and InstallSnapshot (S3)
+
+Snapshotting is deliberately split so the pure core never touches I/O:
+
+- **Compaction is a driver responsibility, not a core message.** The Raft
+  core reads its log exclusively through `LogStorage` and already tolerates
+  a compacted prefix — `raftLog.firstIndex()` is queried live, `term()` and
+  `slice()` return `ErrCompacted` below it, and `sendAppend` falls back to
+  `sendSnapshot` when the entry preceding a follower's `Next` is gone. So a
+  driver compacts by snapshotting its state machine and calling
+  `LogStorage.ApplySnapshot`, which truncates the covered prefix. No new
+  core entry point (no `CreateSnapshot` on `Node`) was needed: adding one
+  would have pushed a policy decision (when to compact) into the pure state
+  machine, which is exactly what the dual-driver design keeps out.
+- **The trigger lives in each driver.** In the simulator, the drive loop
+  compacts a node once its applied index has advanced `SnapshotEntries` past
+  its last snapshot (step (5) of `drain`). The trigger reads only the
+  applied index — no RNG draw — so a run stays a pure function of its seed
+  and the determinism gate still holds with compaction on.
+- **State-machine serialization is the snapshot payload.** `kv.StateMachine`
+  serializes both the key/value map and the `(clientID, seq)` session table
+  (sorted keys, so the bytes are deterministic). Restoring a snapshot
+  therefore preserves exactly-once semantics across a restart, not just the
+  data.
+- **Restore-on-restart.** A restarting node rebuilds its volatile state
+  machine from the persisted snapshot and resumes applying from the
+  compacted index rather than replaying from index 1
+  (`startNode` → `sm.Restore`).
+- **InstallSnapshot catch-up.** When a follower is far enough behind that the
+  leader has compacted away the entries it needs, `sendAppend` ships a
+  `MsgInstallSnapshot`; the follower's `handleSnapshot`/`restore` installs it
+  when it is ahead of the follower's commit index, or fast-forwards the
+  commit index when the covered entry already matches. This is validated
+  end-to-end under a real fault by the `snapshot-under-partition` nemesis
+  scenario (isolate a follower long enough for the majority to compact past
+  it, then heal) and by a focused `TestInstallSnapshotCatchUp`.
+
+Shipped scope: compaction + log truncation + restore-on-restart (always on
+when `SnapshotEntries > 0`), the leader→follower `InstallSnapshot` flow, and
+the `snapshot-under-partition` nemesis scenario — all under the deterministic
+simulator with the linearizability and safety invariants unchanged. Not done:
+snapshot streaming/chunking (the whole snapshot ships in one message) and
+production-runtime (`/server`) compaction scheduling — the disk snapshot files
+(`storage/disk`) exist and are exercised by unit tests, but wiring a periodic
+compaction trigger into the gRPC drive loop is left as future work.

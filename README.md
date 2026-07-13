@@ -21,4 +21,16 @@ Status: stage S0 (scaffold). See [docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md)
 for the architecture and [docs/DEV_NOTES.md](docs/DEV_NOTES.md) for
 building on the dev host.
 
+## Snapshots (scope)
+
+Snapshotting is implemented in the deterministic simulator: log compaction
+with truncation, state-machine + session-table serialization, restore on
+restart, and the leader→follower `InstallSnapshot` catch-up flow (validated by
+the `snapshot-under-partition` nemesis scenario). Limitations: the whole
+snapshot ships in a single message (no chunked streaming), and the production
+`/server` runtime does not yet schedule periodic compaction — the disk
+snapshot files exist and are unit-tested, but compaction is currently
+driver-triggered only in the simulator. See the Snapshots section of
+[docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md).
+
 License: [MIT](LICENSE)
