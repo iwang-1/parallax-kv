@@ -1,0 +1,92 @@
+// Client-facing KV API. Every mutating request carries (client_id, seq)
+// for exactly-once apply dedup; every response carries leader-redirect
+// info so clients can chase the current leader.
+syntax = "proto3";
+
+package parallax.kv;
+
+option go_package = "github.com/iwang-1/parallax-kv/proto/kvpb";
+
+// RequestHeader identifies the client session.
+message RequestHeader {
+  // client_id is a positive session ID unique to this client.
+  uint64 client_id = 1;
+  // seq is strictly increasing per client_id, at most one in flight;
+  // retries reuse the same seq. Ignored for Get (reads are idempotent
+  // and take the ReadIndex path, not the log).
+  uint64 seq = 2;
+}
+
+// ResponseHeader carries leader-redirect information.
+message ResponseHeader {
+  // not_leader is true when the contacted node could not serve the
+  // request because it is not the leader; retry at the hinted leader.
+  bool not_leader = 1;
+  // leader_id is the believed current leader's node ID (0 = unknown).
+  uint64 leader_id = 2;
+  // leader_addr is the believed leader's client-facing address ("" =
+  // unknown).
+  string leader_addr = 3;
+}
+
+message GetRequest {
+  RequestHeader header = 1;
+  string key = 2;
+}
+
+message GetResponse {
+  ResponseHeader header = 1;
+  bool found = 2;
+  bytes value = 3;
+  uint64 version = 4;
+}
+
+message PutRequest {
+  RequestHeader header = 1;
+  string key = 2;
+  bytes value = 3;
+}
+
+message PutResponse {
+  ResponseHeader header = 1;
+  uint64 version = 2;
+}
+
+message DeleteRequest {
+  RequestHeader header = 1;
+  string key = 2;
+}
+
+message DeleteResponse {
+  ResponseHeader header = 1;
+  // found is true if the key existed and was deleted.
+  bool found = 2;
+}
+
+message CasRequest {
+  RequestHeader header = 1;
+  string key = 2;
+  // expect is the required current value; empty-and-absent semantics:
+  // expect_absent=true means "key must not exist" (create-if-absent).
+  bytes expect = 3;
+  bool expect_absent = 4;
+  bytes value = 5;
+}
+
+message CasResponse {
+  ResponseHeader header = 1;
+  // swapped is true if the compare matched and the value was set.
+  bool swapped = 2;
+  // current is the value that defeated the compare (when !swapped).
+  bytes current = 3;
+  uint64 version = 4;
+}
+
+// KVService is the client-facing API served by every node; followers
+// answer with not_leader + a leader hint.
+service KVService {
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Cas(CasRequest) returns (CasResponse);
+}

@@ -1,0 +1,81 @@
+// Peer-to-peer transport for raft messages: a single Step RPC carrying the
+// Message union, mirroring the core's Node.Step input. Wire enum values
+// track the Go constants in package raft; transport/grpc owns the
+// conversion in both directions.
+syntax = "proto3";
+
+package parallax.raft;
+
+option go_package = "github.com/iwang-1/parallax-kv/proto/raftpb";
+
+// MessageType mirrors raft.MessageType. Local-only types (PROPOSE,
+// READ_INDEX) are included for completeness but never sent between peers.
+enum MessageType {
+  MESSAGE_TYPE_UNKNOWN = 0;
+  MESSAGE_TYPE_PROPOSE = 1;
+  MESSAGE_TYPE_READ_INDEX = 2;
+  MESSAGE_TYPE_PRE_VOTE = 3;
+  MESSAGE_TYPE_PRE_VOTE_RESP = 4;
+  MESSAGE_TYPE_VOTE = 5;
+  MESSAGE_TYPE_VOTE_RESP = 6;
+  MESSAGE_TYPE_APPEND = 7;
+  MESSAGE_TYPE_APPEND_RESP = 8;
+  MESSAGE_TYPE_HEARTBEAT = 9;
+  MESSAGE_TYPE_HEARTBEAT_RESP = 10;
+  MESSAGE_TYPE_INSTALL_SNAPSHOT = 11;
+  MESSAGE_TYPE_INSTALL_SNAPSHOT_RESP = 12;
+}
+
+// EntryType mirrors raft.EntryType.
+enum EntryType {
+  ENTRY_TYPE_NORMAL = 0;
+  ENTRY_TYPE_NOOP = 1;
+}
+
+// Entry mirrors raft.Entry.
+message Entry {
+  uint64 term = 1;
+  uint64 index = 2;
+  EntryType type = 3;
+  bytes data = 4;
+}
+
+// Snapshot mirrors raft.Snapshot (metadata flattened).
+message Snapshot {
+  uint64 index = 1;
+  uint64 term = 2;
+  bytes data = 3;
+}
+
+// Message mirrors raft.Message. Field meanings depend on type; see the
+// raft package documentation.
+message Message {
+  MessageType type = 1;
+  uint64 from = 2;
+  uint64 to = 3;
+  uint64 term = 4;
+  uint64 log_index = 5;
+  uint64 log_term = 6;
+  repeated Entry entries = 7;
+  uint64 commit = 8;
+  bool reject = 9;
+  uint64 reject_hint = 10;
+  uint64 hint_term = 11;
+  Snapshot snapshot = 12;
+  bytes context = 13;
+}
+
+// StepRequest batches messages destined for the receiving node.
+message StepRequest {
+  repeated Message messages = 1;
+}
+
+// StepResponse is empty: raft responses are messages in their own right,
+// delivered via the receiver's own Step calls, never via this RPC's
+// return path.
+message StepResponse {}
+
+// RaftTransport is the peer-to-peer service.
+service RaftTransport {
+  rpc Step(StepRequest) returns (StepResponse);
+}
