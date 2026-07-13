@@ -53,6 +53,10 @@ type Config struct {
 	// ElectionTicks/HeartbeatTicks feed raft.Config.
 	ElectionTicks  int
 	HeartbeatTicks int
+	// UnsafeNoSync disables the per-Ready WAL fsync. UNSAFE: a crash can lose
+	// acknowledged writes. Exists only for the [W2] benchmark variant that
+	// quantifies the durability cost; never enable it in production.
+	UnsafeNoSync bool
 }
 
 func (c *Config) withDefaults() {
@@ -138,6 +142,9 @@ func New(cfg Config) (*Server, error) {
 	stor, err := disk.Open(cfg.DataDir)
 	if err != nil {
 		return nil, fmt.Errorf("server: open storage: %w", err)
+	}
+	if cfg.UnsafeNoSync {
+		stor.DisableSync()
 	}
 
 	peerIDs := make([]uint64, 0, len(cfg.Peers))

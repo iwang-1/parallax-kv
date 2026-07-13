@@ -46,7 +46,18 @@ type Storage struct {
 	seg     *os.File
 	segSize int64
 	segSeq  uint64 // sequence number of the active segment
+
+	// noSync, when set, makes Sync write the buffered records to the segment
+	// but skip the durability fsync. This is the UNSAFE benchmark mode: it
+	// measures the throughput ceiling with the durability barrier removed, to
+	// quantify what group-commit fsync costs. It is NEVER used in production;
+	// a crash can lose acknowledged writes.
+	noSync bool
 }
+
+// DisableSync switches the storage into the UNSAFE no-fsync mode described on
+// the noSync field. Intended only for the [W2] benchmark variant.
+func (s *Storage) DisableSync() { s.noSync = true }
 
 var _ raft.LogStorage = (*Storage)(nil)
 

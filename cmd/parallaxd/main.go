@@ -45,6 +45,7 @@ func run() error {
 	tickMillis := fs.Int("tick-ms", 20, "real-time duration of one raft tick in milliseconds")
 	heartbeatTicks := fs.Int("heartbeat-ticks", 5, "leader heartbeat interval in ticks")
 	electionTicks := fs.Int("election-ticks", 50, "base election timeout in ticks")
+	unsafeNoSync := fs.Bool("unsafe-no-fsync", false, "UNSAFE: skip WAL fsync (benchmark-only; a crash can lose acked writes)")
 	_ = fs.Parse(os.Args[1:])
 
 	if *id == 0 {
@@ -80,6 +81,7 @@ func run() error {
 		TickIntervalMillis: *tickMillis,
 		ElectionTicks:      *electionTicks,
 		HeartbeatTicks:     *heartbeatTicks,
+		UnsafeNoSync:       *unsafeNoSync,
 	}
 	srv, err := server.New(cfg)
 	if err != nil {

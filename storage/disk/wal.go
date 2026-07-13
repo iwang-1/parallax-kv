@@ -238,8 +238,10 @@ func (s *Storage) Sync() error {
 	if _, err := s.seg.Write(s.buf); err != nil {
 		return fmt.Errorf("disk: append records: %w", err)
 	}
-	if err := s.seg.Sync(); err != nil {
-		return fmt.Errorf("disk: fsync segment: %w", err)
+	if !s.noSync {
+		if err := s.seg.Sync(); err != nil {
+			return fmt.Errorf("disk: fsync segment: %w", err)
+		}
 	}
 	s.segSize += int64(len(s.buf))
 	s.buf = s.buf[:0]

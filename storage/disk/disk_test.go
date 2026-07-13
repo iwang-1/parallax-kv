@@ -37,6 +37,37 @@ func TestOpenEmpty(t *testing.T) {
 	}
 }
 
+// TestDisableSyncStillWritesRecords covers the UNSAFE benchmark mode: with the
+// fsync disabled, Sync must still write the buffered records to the segment (so
+// a graceful reopen recovers them) — it only skips the durability barrier. This
+// is the [W2] path; it is never used in production.
+func TestDisableSyncStillWritesRecords(t *testing.T) {
+	dir := t.TempDir()
+	s := mustOpen(t, dir)
+	s.DisableSync()
+	if err := s.SetHardState(raft.HardState{Term: 2, Vote: 1, Commit: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendEntries([]raft.Entry{mkEntry(1, 1, "x"), mkEntry(2, 2, "y")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Sync(); err != nil {
+		t.Fatalf("Sync (no fsync): %v", err)
+	}
+	s.Close()
+
+	// A graceful close flushes the file; the records are in the segment even
+	// though no fsync was issued, so a reopen recovers them.
+	s2 := mustOpen(t, dir)
+	defer s2.Close()
+	if li, _ := s2.LastIndex(); li != 2 {
+		t.Fatalf("LastIndex = %d, want 2 (records must reach the segment even without fsync)", li)
+	}
+	if hs, _ := s2.HardState(); hs != (raft.HardState{Term: 2, Vote: 1, Commit: 1}) {
+		t.Fatalf("HardState = %+v, want {2 1 1}", hs)
+	}
+}
+
 func TestAppendSyncReopen(t *testing.T) {
 	dir := t.TempDir()
 	s := mustOpen(t, dir)
