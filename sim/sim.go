@@ -120,6 +120,10 @@ type Simulator struct {
 	seq   uint64 // monotonic event sequence counter (tie-breaker)
 	queue eventQueue
 
+	// scenario is the nemesis scenario name (empty for a plain New run); it
+	// is threaded into the REPLAY hint so a failing run reproduces exactly.
+	scenario string
+
 	peers []uint64
 	nodes map[uint64]*nodeState
 
@@ -253,8 +257,16 @@ func (s *Simulator) RunUntil(t VirtualTime) error {
 func (s *Simulator) Err() error { return s.firstErr }
 
 // withReplay wraps an error with the exact command needed to reproduce it.
+// When the run belongs to a named nemesis scenario, the hint names the
+// scenario and seed so it maps directly onto TestScenarioReplay, the
+// single-run replay harness.
 func (s *Simulator) withReplay(err error) error {
-	return fmt.Errorf("%w\nREPLAY: seed=0x%x (go test -run TestSim -seed=0x%x)", err, s.cfg.Seed, s.cfg.Seed)
+	if s.scenario != "" {
+		return fmt.Errorf("%w\nREPLAY: scenario=%s seed=0x%x "+
+			"(go test ./sim -run TestScenarioReplay -scenario=%s -seed=0x%x)",
+			err, s.scenario, s.cfg.Seed, s.scenario, s.cfg.Seed)
+	}
+	return fmt.Errorf("%w\nREPLAY: seed=0x%x (go test ./sim -run TestScenarioReplay -seed=0x%x)", err, s.cfg.Seed, s.cfg.Seed)
 }
 
 // Partition splits the network into the given groups; messages between
