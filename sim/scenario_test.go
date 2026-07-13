@@ -25,7 +25,28 @@ var (
 	// widen it, e.g. -soak-lo=0 -soak-hi=200.
 	flagSoakLo = flag.Uint64("soak-lo", 0, "inclusive low seed for TestScenarioSoak")
 	flagSoakHi = flag.Uint64("soak-hi", 0, "exclusive high seed for TestScenarioSoak")
+	// Determinism-gate range: TestScenarioDeterminism double-runs every
+	// scenario over these seeds and byte-compares trace hashes. Unset (hi<=lo)
+	// it falls back to the fixed regression corpus so the default suite stays
+	// fast; CI widens it, e.g. -det-lo=0 -det-hi=10, to double-run 10 seeds.
+	flagDetLo = flag.Uint64("det-lo", 0, "inclusive low seed for TestScenarioDeterminism")
+	flagDetHi = flag.Uint64("det-hi", 0, "exclusive high seed for TestScenarioDeterminism")
 )
+
+// determinismSeeds returns the seeds the determinism gate double-runs: the
+// explicit -det-lo/-det-hi range when set, otherwise the fixed regression
+// corpus (so a bare `go test ./sim` still exercises the gate cheaply).
+func determinismSeeds() []uint64 {
+	lo, hi := *flagDetLo, *flagDetHi
+	if hi <= lo {
+		return regressionSeeds
+	}
+	out := make([]uint64, 0, hi-lo)
+	for s := lo; s < hi; s++ {
+		out = append(out, s)
+	}
+	return out
+}
 
 // regressionSeeds are the fixed seeds every normal test run soaks across all
 // scenarios. New organic-failure seeds get appended here so a fixed bug can
@@ -114,8 +135,9 @@ func TestScenarioSoak(t *testing.T) {
 }
 
 // TestScenarioDeterminism is the determinism double-run gate over the nemesis
-// layer: each scenario, over the regression corpus, is run twice and must
-// produce byte-identical trace hashes and equal completed-op counts. A fault
+// layer: each scenario, over a seed set (the fixed regression corpus by
+// default, or the -det-lo/-det-hi range in CI), is run twice and must produce
+// byte-identical trace hashes and equal completed-op counts. A fault
 // schedule that draws timing from the seeded RNG or a checker that reads the
 // wall clock would break this immediately. This is the mechanical enforcement
 // that "every failure replays from its seed" is literally true even with
@@ -131,8 +153,9 @@ func TestScenarioDeterminism(t *testing.T) {
 		}
 		return s.TraceHash(), len(s.History().Operations())
 	}
+	seeds := determinismSeeds()
 	for _, name := range ScenarioNames {
-		for _, seed := range regressionSeeds {
+		for _, seed := range seeds {
 			h1, n1 := run(name, seed)
 			h2, n2 := run(name, seed)
 			if h1 != h2 {

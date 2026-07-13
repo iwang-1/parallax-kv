@@ -1,0 +1,41 @@
+# golangci-lint configuration for parallax-kv.
+#
+# Philosophy: keep the default meta-linters (errcheck, govet, staticcheck,
+# ineffassign, unused) plus a small, high-signal set that guards the
+# properties this repo cares about — no unhandled errors in production code,
+# no dead code, no accidental nondeterminism creeping into the hot paths.
+# We do NOT pile on stylistic linters that would only generate churn.
+#
+# Pinned to the v1.x schema (golangci-lint v1.64.x). CI installs that version
+# explicitly so a silent upstream bump can never change what "lint-clean"
+# means for this repo.
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck # unhandled errors — the durability/consensus code must not swallow them
+    - govet # the vet suite (also run standalone in CI as a fast gate)
+    - staticcheck # the broad correctness/simplification analyzer
+    - ineffassign # ineffectual assignments
+    - unused # dead code (functions, vars, consts)
+    - gofmt # formatting (also gated standalone in CI)
+    - misspell # comment/string typos
+    - unconvert # redundant type conversions
+    - bodyclose # unclosed HTTP/gRPC response bodies
+
+issues:
+  # Show every finding; do not cap per-linter or per-file.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    # Tests deliberately drive the raft core and storage layers by discarding
+    # the returned error on setup calls whose failure would surface anyway as a
+    # wrong post-state; requiring an explicit check on every such call would add
+    # noise without adding coverage. errcheck stays fully enabled for all
+    # non-test (production) code.
+    - path: _test\.go
+      linters:
+        - errcheck

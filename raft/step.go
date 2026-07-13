@@ -1,12 +1,5 @@
 package raft
 
-import "errors"
-
-// errProposalDropped is returned internally when a proposal cannot be
-// appended (no known leader). Node.Step maps the not-leader case to
-// ErrNotLeader.
-var errProposalDropped = errors.New("raft: proposal dropped")
-
 // Step is the single entry point for all inputs. It first applies the
 // term-comparison rules from the Raft paper (§3.3, §4.2.3 PreVote), then
 // dispatches to the role-specific handler.

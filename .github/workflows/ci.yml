@@ -1,7 +1,33 @@
-# CI skeleton (stage S0). Later stages add: golangci-lint, the sim soak
-# (fixed regression seeds + fresh random seeds), the determinism gate
-# (rerun seeds, byte-compare trace hashes), and a bench smoke run that
-# asserts nothing about throughput.
+# CI for parallax-kv.
+#
+# The project's product is TRUST in the consensus implementation, so CI is
+# built around the determinism contract, not just "does it compile":
+#
+#   lint            gofmt / go vet / golangci-lint (pinned) — style + static bugs
+#   unit-race       every package under the race detector (unit + integration +
+#                   e2e + the fixed-seed nemesis regression corpus)
+#   determinism     the gate: 10 seeds x every scenario, run TWICE, trace hashes
+#                   byte-compared — fails on any wall-clock/map-order/goroutine
+#                   leak into the sim path
+#   sim-soak        the fixed regression seeds PLUS ~200 fresh random seeds per
+#                   run; a fresh-seed failure prints its REPLAY line and gets its
+#                   seed committed to regressionSeeds
+#   bench-smoke     builds the real binaries, runs a 3-node cluster + a 3s bench
+#                   in --smoke mode — asserts NOTHING about throughput (host
+#                   numbers live only in benchmarks/RESULTS.md, never in CI)
+#
+# CI uses the default module proxy and checksum DB (the GOPROXY=direct host
+# workaround in docs/DEV_NOTES.md is host-only); go.sum is committed so every
+# dependency is fully verified here.
+#
+# Job sizing is measured, not guessed. On the 48-core build host the nemesis
+# layer runs at ~1.3s per scenario-run (a run = one scenario x one seed), and
+# the sim harness is single-goroutine so this rate is CPU-bound, not
+# core-bound — a slower 2-core GitHub runner is budgeted at ~2-3x. The race
+# detector is applied only where real concurrency lives (server drive loop,
+# gRPC transport, e2e processes); the sim determinism/soak matrices are
+# single-goroutine, so running them under -race would double their wall time
+# for no added coverage and they run without it.
 name: ci
 
 on:
@@ -12,15 +38,22 @@ on:
 permissions:
   contents: read
 
+# Newer pushes to the same ref supersede in-flight runs.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.24.x"
+
 jobs:
-  build-and-test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24.x"
+          go-version: ${{ env.GO_VERSION }}
 
       - name: gofmt
         run: |
@@ -37,5 +70,107 @@ jobs:
       - name: build
         run: go build ./...
 
-      - name: test (race detector)
-        run: go test ./... -race
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+
+  unit-race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # Every package under -race: the pure-core unit tests, kv, storage, the
+      # server drive loop, the gRPC transport, the real-process e2e failover
+      # test, and the fixed-seed nemesis regression corpus. The two dedicated
+      # heavy matrices (soak, determinism) run in their own jobs below.
+      - name: go test -race
+        run: go test ./... -race -count=1 -skip 'TestScenario(Soak|Determinism)$'
+
+  determinism:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # The determinism gate: 10 seeds x every nemesis scenario, each run twice,
+      # trace hashes byte-compared and op-counts checked. Fixed seeds [0,10) so
+      # a divergence is fully reproducible. ~140 runs; ~3 min on the build host.
+      - name: determinism gate (10 seeds, double-run, trace-hash compare)
+        run: go test ./sim -run 'TestScenarioDeterminism$' -det-lo=0 -det-hi=10 -count=1 -v
+
+  sim-soak:
+    runs-on: ubuntu-latest
+    # ~200 fresh seeds x 7 scenarios = ~1400 runs at a measured ~1.3s/run on the
+    # build host; budgeted at up to ~3x for a slower 2-core runner.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # First the fixed regression corpus (every committed seed, incl. any that
+      # a past soak failure pinned), then ~200 FRESH random seeds. The soak base
+      # is randomized per run so CI keeps exploring new fault schedules; a
+      # failure prints 'REPLAY: ... -scenario=<name> -seed=0x...' and that seed
+      # is then committed to regressionSeeds so the fix is guarded forever.
+      - name: fixed-seed regression corpus
+        run: go test ./sim -run 'TestScenarioRegression$' -count=1 -v
+
+      - name: fresh-seed soak (~200 random seeds)
+        run: |
+          base=$(( (RANDOM << 34) ^ (RANDOM << 19) ^ (RANDOM << 4) ^ RANDOM ))
+          hi=$(( base + 200 ))
+          echo "soak seed range: [$base, $hi)"
+          go test ./sim -run 'TestScenarioSoak$' -timeout 80m \
+            -soak-lo="$base" -soak-hi="$hi" -count=1 -v
+
+  bench-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # Build the real binaries, stand up a 3-node localhost cluster, and run a
+      # short closed-loop bench in --smoke mode. This proves the whole runtime
+      # path compiles and serves traffic; it asserts NOTHING about throughput —
+      # every performance number on the resume comes from benchmarks/RESULTS.md,
+      # generated on the build host and never from CI.
+      - name: build binaries
+        run: |
+          mkdir -p bin
+          go build -o bin/parallaxd ./cmd/parallaxd
+          go build -o bin/parallax-bench ./cmd/parallax-bench
+
+      - name: 3-node cluster + bench smoke
+        run: |
+          set -euo pipefail
+          peers="1=localhost:17301,2=localhost:17302,3=localhost:17303"
+          clients="1=localhost:18301,2=localhost:18302,3=localhost:18303"
+          data="$(mktemp -d)"
+          pids=()
+          for i in 1 2 3; do
+            bin/parallaxd --id "$i" --peers "$peers" --client-peers "$clients" \
+              --data-dir "$data/d$i" --listen "localhost:$((18300 + i))" \
+              --tick-ms 10 --heartbeat-ticks 3 --election-ticks 15 \
+              >"$data/n$i.log" 2>&1 &
+            pids+=("$!")
+          done
+          cleanup() { kill "${pids[@]}" 2>/dev/null || true; }
+          trap cleanup EXIT
+          # Give the cluster time to elect a leader before offering load.
+          sleep 5
+          bin/parallax-bench \
+            --cluster "localhost:18301,localhost:18302,localhost:18303" \
+            --workload write --smoke

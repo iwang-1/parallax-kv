@@ -38,7 +38,9 @@ func newRecorder() *recorder {
 // record appends an event and folds it into the running hash.
 func (r *recorder) record(e TraceEvent) {
 	r.events = append(r.events, e)
-	r.hasher.Write(canonicalEvent(e))
+	// hash.Hash.Write never returns an error (documented contract); the
+	// canonical bytes are folded into the running SHA-256 unconditionally.
+	_, _ = r.hasher.Write(canonicalEvent(e))
 }
 
 // canonicalEvent renders one event to its canonical byte form. Integers are
