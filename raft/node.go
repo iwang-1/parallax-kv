@@ -33,13 +33,11 @@ package raft
 // driver serializes all calls (the simulator is single-goroutine, the
 // production server owns a single drive loop).
 type Node struct {
-	cfg     Config
-	storage LogStorage
+	r *raft
 
-	// Volatile state, rebuilt on restart. Concrete fields are the
-	// implementation's business (stage S1); only the method set below is
-	// frozen.
-	state StateType
+	// Fields captured by the most recent Ready, cleared by Advance so the
+	// core knows exactly which prefix the driver has committed to persisting.
+	pendingReady *Ready
 }
 
 // NewNode creates a Node, recovering term, vote, commit, and log position
@@ -52,57 +50,111 @@ func NewNode(cfg Config, storage LogStorage) (*Node, error) {
 	if storage == nil {
 		panic("raft: NewNode called with nil storage")
 	}
-	n := &Node{cfg: cfg, storage: storage, state: StateFollower}
-	// TODO(S1): recover HardState and log bounds from storage.
-	return n, nil
+	r, err := newRaft(cfg, storage)
+	if err != nil {
+		return nil, err
+	}
+	return &Node{r: r}, nil
 }
 
 // Tick advances the node's logical clock by one tick, driving the election
 // timer (followers/candidates) and the heartbeat timer (leaders). The
 // driver defines the real-time meaning of a tick.
-func (n *Node) Tick() {
-	// TODO(S1): election and heartbeat timer logic.
-	panic("raft: Tick not implemented (stage S1)")
-}
+func (n *Node) Tick() { n.r.tick() }
 
 // Step feeds one input message into the state machine: a peer RPC
 // (request or response), a local MsgPropose, or a local MsgReadIndex.
 // It returns ErrNotLeader for proposals and reads stepped into a
 // non-leader, and ignores stale-term peer messages per the Raft rules.
-func (n *Node) Step(m Message) error {
-	// TODO(S1): message dispatch per type and term.
-	panic("raft: Step not implemented (stage S1)")
-}
+func (n *Node) Step(m Message) error { return n.r.Step(m) }
 
 // HasReady reports whether a Ready batch is pending. Drivers poll it after
 // every Tick/Step (this core is poll-based by design — no channels).
 func (n *Node) HasReady() bool {
-	// TODO(S1)
-	panic("raft: HasReady not implemented (stage S1)")
+	if n.pendingReady != nil {
+		return false
+	}
+	r := n.r
+	if len(r.msgs) > 0 || len(r.readStates) > 0 {
+		return true
+	}
+	if len(r.raftLog.unstable.entries) > 0 || r.raftLog.unstable.snapshot != nil {
+		return true
+	}
+	if r.raftLog.hasNextCommittedEnts() {
+		return true
+	}
+	if r.hardState() != r.prevHardSt {
+		return true
+	}
+	return false
 }
 
 // Ready returns the pending output batch. It must not be called again
 // until the previous batch is acknowledged via Advance.
 func (n *Node) Ready() Ready {
-	// TODO(S1)
-	panic("raft: Ready not implemented (stage S1)")
+	r := n.r
+	rd := Ready{
+		Messages:         r.msgs,
+		CommittedEntries: r.raftLog.nextCommittedEnts(),
+		ReadStates:       r.readStates,
+	}
+	if ents := r.raftLog.unstable.entries; len(ents) > 0 {
+		rd.Entries = append([]Entry(nil), ents...)
+	}
+	if snap := r.raftLog.unstable.snapshot; snap != nil {
+		s := *snap
+		rd.Snapshot = &s
+	}
+	if hs := r.hardState(); hs != r.prevHardSt {
+		h := hs
+		rd.HardState = &h
+	}
+	// An fsync is required before sending when term/vote changed or new
+	// entries/snapshot must be durable; a commit-index-only change does not.
+	rd.MustSync = len(rd.Entries) > 0 || rd.Snapshot != nil ||
+		(rd.HardState != nil && (rd.HardState.Term != r.prevHardSt.Term || rd.HardState.Vote != r.prevHardSt.Vote))
+
+	n.pendingReady = &rd
+	return rd
 }
 
 // Advance acknowledges the last Ready batch: state persisted, messages
 // handed off, committed entries applied. Only after Advance will further
 // Ready batches be produced.
 func (n *Node) Advance(ack PersistAck) {
-	// TODO(S1)
-	panic("raft: Advance not implemented (stage S1)")
+	rd := n.pendingReady
+	if rd == nil {
+		return
+	}
+	r := n.r
+	if rd.HardState != nil {
+		r.prevHardSt = *rd.HardState
+	}
+	if len(rd.Entries) > 0 {
+		last := rd.Entries[len(rd.Entries)-1]
+		r.raftLog.stableTo(last.Index, last.Term)
+	}
+	if rd.Snapshot != nil {
+		r.raftLog.stableSnapTo(rd.Snapshot.Metadata.Index)
+	}
+	if len(rd.CommittedEntries) > 0 {
+		last := rd.CommittedEntries[len(rd.CommittedEntries)-1]
+		r.raftLog.appliedTo(last.Index)
+	}
+	// Messages and read states have been consumed.
+	r.msgs = nil
+	r.readStates = nil
+	n.pendingReady = nil
 }
 
 // State returns the node's current role (for tests, invariant checkers,
 // and metrics; not part of the consensus contract).
-func (n *Node) State() StateType { return n.state }
+func (n *Node) State() StateType { return n.r.state }
 
 // Leader returns the node ID this node believes is the current leader,
 // or 0 if unknown (used for client redirect).
-func (n *Node) Leader() uint64 {
-	// TODO(S1)
-	panic("raft: Leader not implemented (stage S1)")
-}
+func (n *Node) Leader() uint64 { return n.r.lead }
+
+// Term returns the node's current term (for tests and invariant checkers).
+func (n *Node) Term() uint64 { return n.r.Term }
