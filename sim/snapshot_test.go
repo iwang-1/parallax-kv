@@ -1,8 +1,37 @@
 package sim
 
 import (
+	"strings"
 	"testing"
 )
+
+// countInstallSnapshot returns how many MsgInstallSnapshot deliveries the
+// trace recorded (the deliver detail is the rendered message, which begins
+// with the message type name).
+func countInstallSnapshot(trace []TraceEvent) int {
+	n := 0
+	for _, e := range trace {
+		if e.Kind == "deliver" && strings.HasPrefix(e.Detail, "InstallSnapshot ") {
+			n++
+		}
+	}
+	return n
+}
+
+// aLiveFollower returns the id of some live non-leader node, or 0.
+func (s *Simulator) aLiveFollower() uint64 {
+	lead := s.liveLeader()
+	for _, id := range s.peers {
+		ns := s.nodes[id]
+		if ns == nil || ns.crashed || ns.node == nil {
+			continue
+		}
+		if id != lead {
+			return id
+		}
+	}
+	return 0
+}
 
 // snapshotConfig is a low-fault config that enables aggressive compaction: a
 // small SnapshotEntries threshold so nodes snapshot and truncate their logs
@@ -113,6 +142,102 @@ func TestSnapshotRestartRestore(t *testing.T) {
 	}
 	t.Logf("node %d restored from snapshot index %d and rejoined; cluster linearizable",
 		target, snapIndex)
+}
+
+// TestInstallSnapshotCatchUp exercises the leader->follower InstallSnapshot
+// flow: a follower is crashed and held down while the leader keeps committing
+// and compacting, so the leader discards (into its own snapshot) the very
+// entries the follower still needs. When the follower restarts, the entries
+// preceding its next index no longer exist as individual log entries on the
+// leader, so the leader must ship an InstallSnapshot rather than an
+// AppendEntries. The test asserts an InstallSnapshot was actually delivered
+// and that the follower caught up to the cluster's applied frontier, all while
+// staying linearizable.
+func TestInstallSnapshotCatchUp(t *testing.T) {
+	c := snapshotConfig(3)
+	// Clean network so the flow is crisp and the follower falls behind purely
+	// because it is down, not because of drops.
+	c.Net.DropRate = 0
+	c.Net.DupRate = 0
+	s, err := New(c)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Let a leader emerge and commit a little.
+	if err := s.RunUntil(1 * Second); err != nil {
+		t.Fatalf("warmup run: %v", err)
+	}
+	victim := s.aLiveFollower()
+	if victim == 0 {
+		t.Fatal("no live follower to crash")
+	}
+
+	// Crash the follower and keep it down while the leader commits and compacts
+	// well past the follower's log.
+	s.Crash(victim)
+	if err := s.RunUntil(6 * Second); err != nil {
+		t.Fatalf("down-window run: %v", err)
+	}
+
+	// The leader must have compacted past index 1 (else there is nothing to
+	// force a snapshot); confirm some live node discarded a log prefix.
+	compacted := false
+	for _, id := range s.peers {
+		ns := s.nodes[id]
+		if ns == nil || ns.crashed {
+			continue
+		}
+		if fi, err := ns.storage.FirstIndex(); err == nil && fi > 1 {
+			compacted = true
+		}
+	}
+	if !compacted {
+		t.Fatal("no live node compacted while the follower was down; cannot force InstallSnapshot")
+	}
+
+	// Restart the follower: it needs entries the leader no longer holds, so the
+	// leader must catch it up with an InstallSnapshot.
+	s.Restart(victim)
+	if s.Err() != nil {
+		t.Fatalf("restart: %v", s.Err())
+	}
+	if err := s.RunUntil(12 * Second); err != nil {
+		t.Fatalf("catch-up run: %v", err)
+	}
+
+	// (1) An InstallSnapshot was actually delivered.
+	if n := countInstallSnapshot(s.Trace()); n == 0 {
+		t.Fatal("expected at least one InstallSnapshot delivery, saw none")
+	}
+
+	// (2) The restarted follower caught up to near the cluster frontier: its
+	// applied index reached at least the leader's snapshot index (it installed
+	// the snapshot) and it advanced beyond it.
+	frontier := uint64(0)
+	for _, id := range s.peers {
+		ns := s.nodes[id]
+		if ns != nil && !ns.crashed && ns.applied > frontier {
+			frontier = ns.applied
+		}
+	}
+	vns := s.nodes[victim]
+	if vns == nil || vns.crashed {
+		t.Fatal("victim not live after catch-up")
+	}
+	if vns.applied == 0 {
+		t.Fatalf("victim %d did not apply anything after InstallSnapshot", victim)
+	}
+	if frontier > 0 && vns.applied*2 < frontier {
+		t.Fatalf("victim %d applied=%d lags far behind frontier=%d after catch-up", victim, vns.applied, frontier)
+	}
+
+	// (3) Still linearizable.
+	if err := s.CheckLinearizability(); err != nil {
+		t.Fatalf("linearizability after InstallSnapshot: %v", err)
+	}
+	t.Logf("follower %d caught up via InstallSnapshot: applied=%d, frontier=%d, %d InstallSnapshot deliveries",
+		victim, vns.applied, frontier, countInstallSnapshot(s.Trace()))
 }
 
 // TestSnapshotDeterminism proves compaction did not leak nondeterminism: with
