@@ -1,101 +1,165 @@
 // Package disk is the production LogStorage: a segmented write-ahead log
 // plus snapshot files.
 //
-// WAL format: append-only segment files (wal-<firstIndex>.seg) of
-// length-prefixed, CRC32-framed records (record = frame header {length,
-// crc32c} + payload). Records carry hard-state updates, entry appends, and
-// truncation marks. Durability is group commit: one fsync per Ready batch,
-// covering every record the batch wrote — this is where write throughput
-// comes from (see docs/DESIGN_NOTES.md).
+// WAL format: append-only segment files (wal-<seq>.seg) of length-prefixed,
+// CRC32C-framed records (frame = {payloadLen, crc32c} header + payload). A
+// record's payload is a type tag followed by a type-specific body; the log
+// carries entry appends and hard-state updates. The WAL is a logical redo
+// log: replaying every record in order — an entry record installs its entry
+// at its index (truncating any conflicting suffix), a hard-state record
+// overwrites the hard state — reconstructs the durable state. Log truncation
+// therefore needs no explicit record: a new entry at an existing index
+// overwrites it on replay.
 //
-// Recovery scans segments in order, verifying CRCs; a torn tail (partial
-// or corrupt final record from a mid-write crash) is truncated, never
-// trusted. Snapshots are written atomically: tmp file, fsync, rename,
-// fsync parent directory.
+// Durability is group commit: writes are buffered in memory and flushed by a
+// single fsync per Ready batch (Sync), covering every record the batch wrote
+// — this is where write throughput comes from (see docs/DESIGN_NOTES.md).
+//
+// Recovery scans segments in order, verifying CRCs; a torn tail (a partial or
+// corrupt final record from a mid-write crash) marks the logical end of the
+// log and is truncated, never trusted. Snapshots are written atomically: tmp
+// file, fsync, rename, fsync parent directory.
 package disk
 
-import "github.com/iwang-1/parallax-kv/raft"
+import (
+	"fmt"
+	"os"
 
-// Storage is the durable raft.LogStorage. Not safe for concurrent use;
-// the server's drive loop owns it.
+	"github.com/iwang-1/parallax-kv/raft"
+)
+
+// Storage is the durable raft.LogStorage. Not safe for concurrent use; the
+// server's drive loop owns it.
 type Storage struct {
 	dir string
+
+	// In-memory mirror of durable state, the source of truth for reads.
+	hardState raft.HardState
+	snapshot  raft.Snapshot
+	// entries[i] holds the entry at index snapshot.Metadata.Index + 1 + i.
+	entries []raft.Entry
+
+	// buf accumulates framed records written since the last Sync.
+	buf []byte
+
+	// Active segment being appended to.
+	seg     *os.File
+	segSize int64
+	segSeq  uint64 // sequence number of the active segment
 }
 
 var _ raft.LogStorage = (*Storage)(nil)
 
-// Open opens (creating if needed) the WAL and snapshot state in dir and
-// runs recovery.
-func Open(dir string) (*Storage, error) {
-	// TODO(S1): segment discovery, CRC scan, torn-tail truncation.
-	panic("storage/disk: Open not implemented (stage S1)")
-}
+// maxSegmentSize triggers rotation to a fresh segment on the next Sync once
+// the active segment reaches this size. It is a var (not a const) only so
+// tests can shrink it to exercise multi-segment rotation and recovery; it is
+// never mutated in production.
+var maxSegmentSize int64 = 16 << 20 // 16 MiB
 
-// Sync fsyncs all records written since the last Sync — the group-commit
-// point, called once per Ready batch (when Ready.MustSync) before messages
-// are sent.
-func (s *Storage) Sync() error {
-	// TODO(S1)
-	panic("storage/disk: Sync not implemented (stage S1)")
+// offset is the index of the last entry covered by the snapshot.
+func (s *Storage) offset() uint64 {
+	return s.snapshot.Metadata.Index
 }
 
 // Close releases file handles. The storage is unusable afterwards.
 func (s *Storage) Close() error {
-	// TODO(S1)
-	panic("storage/disk: Close not implemented (stage S1)")
+	if s.seg == nil {
+		return nil
+	}
+	err := s.seg.Close()
+	s.seg = nil
+	return err
 }
 
-// AppendEntries implements raft.LogStorage. Writes are buffered until Sync.
+// AppendEntries implements raft.LogStorage. It updates the in-memory log and
+// buffers a record per entry; the records are not durable until Sync. Entries
+// must be contiguous with the existing log; a conflicting suffix is truncated
+// first. Entries at or below the snapshot index are dropped as already
+// durable.
 func (s *Storage) AppendEntries(entries []raft.Entry) error {
-	// TODO(S1)
-	panic("storage/disk: AppendEntries not implemented (stage S1)")
+	if len(entries) == 0 {
+		return nil
+	}
+	off := s.offset()
+	first := entries[0].Index
+	last := entries[len(entries)-1].Index
+	if last <= off {
+		return nil
+	}
+	if first <= off {
+		entries = entries[off+1-first:]
+		first = entries[0].Index
+	}
+	pos := first - (off + 1)
+	if pos > uint64(len(s.entries)) {
+		return raft.ErrUnavailable
+	}
+	s.entries = append(s.entries[:pos], entries...)
+	for i := range entries {
+		s.buf = appendFrame(s.buf, encodeEntry(entries[i]))
+	}
+	return nil
 }
 
-// SetHardState implements raft.LogStorage. Writes are buffered until Sync.
+// SetHardState implements raft.LogStorage. Buffered until Sync.
 func (s *Storage) SetHardState(st raft.HardState) error {
-	// TODO(S1)
-	panic("storage/disk: SetHardState not implemented (stage S1)")
+	s.hardState = st
+	s.buf = appendFrame(s.buf, encodeHardState(st))
+	return nil
 }
 
 // HardState implements raft.LogStorage.
 func (s *Storage) HardState() (raft.HardState, error) {
-	// TODO(S1)
-	panic("storage/disk: HardState not implemented (stage S1)")
+	return s.hardState, nil
 }
 
-// Entries implements raft.LogStorage.
+// Entries implements raft.LogStorage, returning entries in [lo, hi).
 func (s *Storage) Entries(lo, hi uint64) ([]raft.Entry, error) {
-	// TODO(S1)
-	panic("storage/disk: Entries not implemented (stage S1)")
+	off := s.offset()
+	if lo <= off {
+		return nil, raft.ErrCompacted
+	}
+	last := off + uint64(len(s.entries))
+	if hi > last+1 {
+		return nil, raft.ErrUnavailable
+	}
+	if lo > hi {
+		return nil, raft.ErrUnavailable
+	}
+	if lo == hi {
+		return nil, nil
+	}
+	out := make([]raft.Entry, hi-lo)
+	copy(out, s.entries[lo-off-1:hi-off-1])
+	return out, nil
 }
 
 // Term implements raft.LogStorage.
 func (s *Storage) Term(i uint64) (uint64, error) {
-	// TODO(S1)
-	panic("storage/disk: Term not implemented (stage S1)")
+	off := s.offset()
+	if i == off {
+		return s.snapshot.Metadata.Term, nil
+	}
+	if i < off {
+		return 0, raft.ErrCompacted
+	}
+	if i > off+uint64(len(s.entries)) {
+		return 0, raft.ErrUnavailable
+	}
+	return s.entries[i-off-1].Term, nil
 }
 
 // FirstIndex implements raft.LogStorage.
 func (s *Storage) FirstIndex() (uint64, error) {
-	// TODO(S1)
-	panic("storage/disk: FirstIndex not implemented (stage S1)")
+	return s.offset() + 1, nil
 }
 
 // LastIndex implements raft.LogStorage.
 func (s *Storage) LastIndex() (uint64, error) {
-	// TODO(S1)
-	panic("storage/disk: LastIndex not implemented (stage S1)")
+	return s.offset() + uint64(len(s.entries)), nil
 }
 
-// ApplySnapshot implements raft.LogStorage (atomic snapshot file write +
-// WAL compaction).
-func (s *Storage) ApplySnapshot(snap raft.Snapshot) error {
-	// TODO(S1)
-	panic("storage/disk: ApplySnapshot not implemented (stage S1)")
-}
-
-// Snapshot implements raft.LogStorage.
-func (s *Storage) Snapshot() (raft.Snapshot, error) {
-	// TODO(S1)
-	panic("storage/disk: Snapshot not implemented (stage S1)")
+// segmentName returns the file name for segment sequence seq.
+func segmentName(seq uint64) string {
+	return fmt.Sprintf("wal-%020d.seg", seq)
 }
