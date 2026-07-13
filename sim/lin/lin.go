@@ -10,6 +10,8 @@
 package lin
 
 import (
+	"sort"
+
 	"github.com/anishathalye/porcupine"
 
 	"github.com/iwang-1/parallax-kv/kv"
@@ -44,8 +46,10 @@ func NewHistory() *History {
 // Invoke records the start of an operation at virtual time `at` and
 // returns an ID to pass to Complete.
 func (h *History) Invoke(clientID uint64, cmd kv.Command, at int64) int {
-	// TODO(S1)
-	panic("lin: Invoke not implemented (stage S1)")
+	id := h.nextID
+	h.nextID++
+	h.pending[id] = Operation{ClientID: clientID, Input: cmd, Call: at, Return: -1}
+	return id
 }
 
 // Complete records the response for a previously invoked operation.
@@ -53,14 +57,38 @@ func (h *History) Invoke(clientID uint64, cmd kv.Command, at int64) int {
 // pending and are handed to Porcupine as possibly-taking-effect, per the
 // standard treatment of indeterminate operations.
 func (h *History) Complete(id int, res kv.Result, at int64) {
-	// TODO(S1)
-	panic("lin: Complete not implemented (stage S1)")
+	op, ok := h.pending[id]
+	if !ok {
+		return
+	}
+	op.Output = res
+	op.Return = at
+	delete(h.pending, id)
+	h.ops = append(h.ops, op)
 }
 
-// Operations returns all completed operations.
+// Operations returns all completed operations, in the order they were
+// completed. Operations still pending (never completed) are not included.
 func (h *History) Operations() []Operation {
-	// TODO(S1)
-	panic("lin: Operations not implemented (stage S1)")
+	out := make([]Operation, len(h.ops))
+	copy(out, h.ops)
+	return out
+}
+
+// Pending returns the operations that were invoked but never completed
+// (client crashed, request or response lost). Callers that hand histories
+// to Porcupine treat these as possibly-taking-effect.
+func (h *History) Pending() []Operation {
+	ids := make([]int, 0, len(h.pending))
+	for id := range h.pending {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	out := make([]Operation, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, h.pending[id])
+	}
+	return out
 }
 
 // KVModel returns the Porcupine sequential model of the kv state machine:

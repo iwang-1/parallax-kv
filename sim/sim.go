@@ -16,6 +16,9 @@
 package sim
 
 import (
+	"fmt"
+	"math/rand"
+
 	"github.com/iwang-1/parallax-kv/raft"
 	"github.com/iwang-1/parallax-kv/sim/lin"
 )
@@ -109,95 +112,219 @@ type TraceEvent struct {
 // Simulator runs one deterministic simulation. Not safe for concurrent
 // use, by design: everything happens on the caller's goroutine.
 type Simulator struct {
-	cfg Config
+	cfg   Config
+	rng   *rand.Rand
+	now   VirtualTime
+	seq   uint64 // monotonic event sequence counter (tie-breaker)
+	queue eventQueue
+
+	peers []uint64
+	nodes map[uint64]*nodeState
+
+	net      *network
+	rec      *recorder
+	hist     *lin.History
+	clients  []*client
+	checker  *invariants
+	firstErr error
+
+	// factories are injectable so harness tests can substitute a mock node
+	// and/or storage without the real consensus core.
+	newNode    nodeFactory
+	newStorage storageFactory
 }
 
 // New validates cfg and builds the cluster: nodes, mem storages, network,
-// workload clients, trace recorder, and invariant checkers.
+// workload clients, trace recorder, and invariant checkers. It uses the
+// real raft core and in-memory storage; tests that need a mock node build
+// the Simulator through newWith.
 func New(cfg Config) (*Simulator, error) {
-	// TODO(S1)
-	panic("sim: New not implemented (stage S1)")
+	return newWith(cfg, defaultNodeFactory, defaultStorageFactory)
+}
+
+// newWith is the construction seam shared by New and the harness tests. The
+// node and storage factories are injected so the event loop, network, fault
+// injectors, workload, trace, and invariant machinery can be exercised
+// against a trivial mock node (stage S1) and later the real core (S2).
+func newWith(cfg Config, nf nodeFactory, sf storageFactory) (*Simulator, error) {
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	s := &Simulator{
+		cfg:        cfg,
+		rng:        rand.New(rand.NewSource(int64(cfg.Seed))),
+		nodes:      make(map[uint64]*nodeState, cfg.Nodes),
+		rec:        newRecorder(),
+		hist:       lin.NewHistory(),
+		newNode:    nf,
+		newStorage: sf,
+	}
+	for i := 1; i <= cfg.Nodes; i++ {
+		s.peers = append(s.peers, uint64(i))
+	}
+	s.net = newNetwork(cfg.Net, s.rng)
+	s.checker = newInvariants(s.peers)
+
+	for _, id := range s.peers {
+		ns := &nodeState{id: id, storage: sf(id)}
+		if err := s.startNode(ns); err != nil {
+			return nil, fmt.Errorf("sim: starting node %d: %w", id, err)
+		}
+		s.nodes[id] = ns
+	}
+
+	// Schedule the first tick for every node and spin up the workload.
+	for _, id := range s.peers {
+		s.scheduleTick(id, cfg.TickEvery)
+	}
+	s.startWorkload()
+	return s, nil
+}
+
+// validate checks a sim Config.
+func (c *Config) validate() error {
+	switch {
+	case c.Nodes <= 0:
+		return fmt.Errorf("sim: Nodes must be positive, got %d", c.Nodes)
+	case c.ElectionTicks <= c.HeartbeatTicks:
+		return fmt.Errorf("sim: ElectionTicks (%d) must exceed HeartbeatTicks (%d)", c.ElectionTicks, c.HeartbeatTicks)
+	case c.HeartbeatTicks <= 0:
+		return fmt.Errorf("sim: HeartbeatTicks must be positive, got %d", c.HeartbeatTicks)
+	case c.TickEvery <= 0:
+		return fmt.Errorf("sim: TickEvery must be positive, got %d", c.TickEvery)
+	}
+	if c.Net.DropRate < 0 || c.Net.DropRate > 1 {
+		return fmt.Errorf("sim: Net.DropRate must be in [0,1], got %v", c.Net.DropRate)
+	}
+	if c.Net.DupRate < 0 || c.Net.DupRate > 1 {
+		return fmt.Errorf("sim: Net.DupRate must be in [0,1], got %v", c.Net.DupRate)
+	}
+	if r := c.Workload.PutRatio + c.Workload.DeleteRatio + c.Workload.CasRatio; r < 0 || r > 1 {
+		return fmt.Errorf("sim: workload op ratios must sum to <= 1, got %v", r)
+	}
+	return nil
 }
 
 // Now returns the current virtual time.
-func (s *Simulator) Now() VirtualTime {
-	// TODO(S1)
-	panic("sim: Now not implemented (stage S1)")
-}
+func (s *Simulator) Now() VirtualTime { return s.now }
 
-// Step dispatches the next event from the queue. It returns false when no
-// events remain. Invariants are checked after every step; a violation is
-// returned by RunUntil (or retrievable via Err after manual stepping).
+// Step dispatches the next event from the queue and advances virtual time
+// to its firing time. It returns false when no events remain. Invariants
+// are checked after every step; the first violation is latched and
+// retrievable via Err (and returned by RunUntil).
 func (s *Simulator) Step() bool {
-	// TODO(S1)
-	panic("sim: Step not implemented (stage S1)")
+	e := s.queue.pop()
+	if e == nil {
+		return false
+	}
+	// Virtual time is monotonic: events never fire before the current time
+	// because the queue is ordered by (at, seq) and every scheduled event
+	// is at >= now.
+	s.now = e.at
+	if e.detail != "" || e.kind != "" {
+		s.rec.record(TraceEvent{At: e.at, Seq: e.seq, Kind: e.kind, Node: e.node, Detail: e.detail})
+	}
+	e.action()
+	if s.firstErr == nil {
+		if err := s.checker.check(s.now, s.nodes); err != nil {
+			s.firstErr = s.withReplay(err)
+		}
+	}
+	return true
 }
 
-// RunUntil steps the simulation until virtual time t (or event exhaustion)
-// and returns the first invariant violation, if any. The error message
-// includes the replay seed.
+// RunUntil steps the simulation until virtual time t (inclusive) or event
+// exhaustion, returning the first invariant violation observed. The error
+// message includes the replay seed so any failure can be re-run.
 func (s *Simulator) RunUntil(t VirtualTime) error {
-	// TODO(S1)
-	panic("sim: RunUntil not implemented (stage S1)")
+	for s.firstErr == nil {
+		next := s.queue.peek()
+		if next == nil || next.at > t {
+			break
+		}
+		s.Step()
+	}
+	return s.firstErr
 }
 
 // Err returns the first invariant violation observed so far (nil if none).
-func (s *Simulator) Err() error {
-	// TODO(S1)
-	panic("sim: Err not implemented (stage S1)")
+func (s *Simulator) Err() error { return s.firstErr }
+
+// withReplay wraps an error with the exact command needed to reproduce it.
+func (s *Simulator) withReplay(err error) error {
+	return fmt.Errorf("%w\nREPLAY: seed=0x%x (go test -run TestSim -seed=0x%x)", err, s.cfg.Seed, s.cfg.Seed)
 }
 
 // Partition splits the network into the given groups; messages between
-// groups are dropped. Nodes not listed form an implicit final group.
+// groups are dropped until Heal. Nodes not listed form an implicit final
+// group. The partition takes effect immediately and is recorded in the
+// trace (topology changes are part of the deterministic run).
 func (s *Simulator) Partition(groups ...[]uint64) {
-	// TODO(S1)
-	panic("sim: Partition not implemented (stage S1)")
+	s.net.setPartition(groups)
+	s.recordControl("partition", 0, renderGroups(groups))
 }
 
 // Heal removes all partitions.
 func (s *Simulator) Heal() {
-	// TODO(S1)
-	panic("sim: Heal not implemented (stage S1)")
+	s.net.heal()
+	s.recordControl("heal", 0, "")
 }
 
-// Crash stops node id, discarding ALL volatile state (the raft.Node, its
+// Crash stops node id, discarding ALL volatile state (the raft node, its
 // in-flight messages) while keeping state persisted through LogStorage —
-// exactly what a power failure keeps.
+// exactly what a power failure keeps. In-flight messages already scheduled
+// for delivery to a crashed node are dropped at delivery time.
 func (s *Simulator) Crash(id uint64) {
-	// TODO(S1)
-	panic("sim: Crash not implemented (stage S1)")
+	ns, ok := s.nodes[id]
+	if !ok || ns.crashed {
+		return
+	}
+	ns.crashed = true
+	ns.node = nil
+	ns.sm = nil
+	ns.applied = 0
+	ns.appliedLog = nil
+	s.recordControl("crash", id, "")
 }
 
-// Restart rebuilds node id from its persisted state and rejoins it.
+// Restart rebuilds node id from its persisted state and rejoins it: a fresh
+// raft node recovers term/vote/log from the durable storage that survived
+// the crash, and its tick timer is rescheduled.
 func (s *Simulator) Restart(id uint64) {
-	// TODO(S1)
-	panic("sim: Restart not implemented (stage S1)")
+	ns, ok := s.nodes[id]
+	if !ok || !ns.crashed {
+		return
+	}
+	ns.crashed = false
+	if err := s.startNode(ns); err != nil {
+		s.firstErr = s.withReplay(fmt.Errorf("sim: restart node %d: %w", id, err))
+		return
+	}
+	s.recordControl("restart", id, "")
+	s.scheduleTick(id, s.cfg.TickEvery)
+	s.drain(ns)
 }
 
 // SetMessageHook installs h as the scenario-level message interceptor
-// (nil to remove).
-func (s *Simulator) SetMessageHook(h MessageHook) {
-	// TODO(S1)
-	panic("sim: SetMessageHook not implemented (stage S1)")
-}
+// (nil to remove). Hooks run after the built-in drop/dup/delay
+// distributions and must be deterministic.
+func (s *Simulator) SetMessageHook(h MessageHook) { s.net.hook = h }
 
 // Trace returns the recorded events so far.
-func (s *Simulator) Trace() []TraceEvent {
-	// TODO(S1)
-	panic("sim: Trace not implemented (stage S1)")
-}
+func (s *Simulator) Trace() []TraceEvent { return s.rec.snapshot() }
 
 // TraceHash returns the lowercase-hex SHA-256 of the canonically
 // serialized trace — equal Configs MUST yield equal hashes, and CI
 // enforces it.
-func (s *Simulator) TraceHash() string {
-	// TODO(S1)
-	panic("sim: TraceHash not implemented (stage S1)")
-}
+func (s *Simulator) TraceHash() string { return s.rec.hash() }
 
 // History returns the client operation history for linearizability
 // checking (invoke/return pairs stamped with virtual times).
-func (s *Simulator) History() *lin.History {
-	// TODO(S1)
-	panic("sim: History not implemented (stage S1)")
+func (s *Simulator) History() *lin.History { return s.hist }
+
+// recordControl records a control-plane event (fault injection) into the
+// trace at the current virtual time.
+func (s *Simulator) recordControl(kind string, node uint64, detail string) {
+	s.seq++
+	s.rec.record(TraceEvent{At: s.now, Seq: s.seq, Kind: kind, Node: node, Detail: detail})
 }
