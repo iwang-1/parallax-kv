@@ -1,5 +1,7 @@
 package kv
 
+import "fmt"
+
 // OpType is the operation carried by a Command.
 type OpType uint8
 
@@ -59,15 +61,66 @@ type Result struct {
 	Version uint64
 }
 
+// commandEncodingVersion is the first byte of every encoded Command,
+// allowing the wire format to evolve without ambiguity.
+const commandEncodingVersion byte = 1
+
 // EncodeCommand serializes a Command for storage in a raft.Entry's Data.
 // The encoding is deterministic: equal Commands produce equal bytes.
+//
+// Layout (big-endian): version(1) | ClientID(8) | Seq(8) | Op(1) |
+// keyLen(4)+key | Value presence(1)[+len(4)+bytes] |
+// Expect presence(1)[+len(4)+bytes]. The presence flags preserve the
+// nil-vs-empty distinction that OpCAS's Expect depends on.
 func EncodeCommand(c Command) []byte {
-	// TODO(S1): length-prefixed binary encoding.
-	panic("kv: EncodeCommand not implemented (stage S1)")
+	buf := make([]byte, 0, 1+8+8+1+4+len(c.Key)+(1+4+len(c.Value))+(1+4+len(c.Expect)))
+	buf = append(buf, commandEncodingVersion)
+	buf = appendUint64(buf, c.ClientID)
+	buf = appendUint64(buf, c.Seq)
+	buf = append(buf, byte(c.Op))
+	buf = appendString(buf, c.Key)
+	buf = appendOptBytes(buf, c.Value)
+	buf = appendOptBytes(buf, c.Expect)
+	return buf
 }
 
-// DecodeCommand parses bytes produced by EncodeCommand.
+// DecodeCommand parses bytes produced by EncodeCommand. It is strict:
+// truncated input, an unknown version or op, or trailing bytes all fail.
 func DecodeCommand(data []byte) (Command, error) {
-	// TODO(S1)
-	panic("kv: DecodeCommand not implemented (stage S1)")
+	d := &decoder{buf: data}
+	version, err := d.byte()
+	if err != nil {
+		return Command{}, err
+	}
+	if version != commandEncodingVersion {
+		return Command{}, fmt.Errorf("kv: unknown command encoding version %d", version)
+	}
+	var c Command
+	if c.ClientID, err = d.uint64(); err != nil {
+		return Command{}, err
+	}
+	if c.Seq, err = d.uint64(); err != nil {
+		return Command{}, err
+	}
+	op, err := d.byte()
+	if err != nil {
+		return Command{}, err
+	}
+	c.Op = OpType(op)
+	if c.Op < OpGet || c.Op > OpCAS {
+		return Command{}, fmt.Errorf("kv: invalid op %d in encoded command", op)
+	}
+	if c.Key, err = d.string(); err != nil {
+		return Command{}, err
+	}
+	if c.Value, err = d.optBytes(); err != nil {
+		return Command{}, err
+	}
+	if c.Expect, err = d.optBytes(); err != nil {
+		return Command{}, err
+	}
+	if err := d.finish(); err != nil {
+		return Command{}, err
+	}
+	return c, nil
 }
