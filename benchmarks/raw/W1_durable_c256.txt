@@ -1,0 +1,45 @@
+### W1_durable workload=write clients=256  2026-07-13T11:30:15Z
+workload=write clients=256 duration=30s
+  ops (measured)   : 8462
+  errors           : 0
+  throughput       : 282.1 ops/sec
+  latency p50      : 905.075ms
+  latency p99      : 1.016574s
+  latency max      : 1.057311s
+
+### W1_durable workload=write clients=256  2026-07-13T11:30:57Z
+workload=write clients=256 duration=30s
+  ops (measured)   : 8587
+  errors           : 0
+  throughput       : 286.2 ops/sec
+  latency p50      : 892.505ms
+  latency p99      : 1.006659s
+  latency max      : 1.039968s
+
+### W1_durable workload=write clients=256  2026-07-13T11:31:40Z
+workload=write clients=256 duration=30s
+  ops (measured)   : 8533
+  errors           : 0
+  throughput       : 284.4 ops/sec
+  latency p50      : 899.909ms
+  latency p99      : 988.525ms
+  latency max      : 1.039147s
+
+### W1_durable workload=write clients=256  2026-07-13T11:32:22Z
+workload=write clients=256 duration=30s
+  ops (measured)   : 8603
+  errors           : 0
+  throughput       : 286.8 ops/sec
+  latency p50      : 894.802ms
+  latency p99      : 995.523ms
+  latency max      : 1.045177s
+
+### W1_durable workload=write clients=256  2026-07-13T11:33:04Z
+workload=write clients=256 duration=30s
+  ops (measured)   : 8548
+  errors           : 0
+  throughput       : 284.9 ops/sec
+  latency p50      : 898.68ms
+  latency p99      : 990.762ms
+  latency max      : 1.04448s
+

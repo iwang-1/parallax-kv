@@ -1,0 +1,9 @@
+4KiB fsync latency  (dir=/home/dev/parallax-bench-data, n=200)
+----------------------------------------
+  min   0.71ms
+  p50   0.90ms
+  p99   3.04ms
+  max   3.07ms
+  mean  1.09ms
+----------------------------------------
+4KiB fsync p50=0.90ms p99=3.04ms n=200

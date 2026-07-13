@@ -1,0 +1,45 @@
+### W2_unsafe workload=write clients=1  2026-07-13T11:47:41Z
+workload=write clients=1 duration=30s
+  ops (measured)   : 124641
+  errors           : 0
+  throughput       : 4154.7 ops/sec
+  latency p50      : 230µs
+  latency p99      : 503µs
+  latency max      : 20.247ms
+
+### W2_unsafe workload=write clients=1  2026-07-13T11:48:16Z
+workload=write clients=1 duration=30s
+  ops (measured)   : 126568
+  errors           : 0
+  throughput       : 4218.9 ops/sec
+  latency p50      : 229µs
+  latency p99      : 326µs
+  latency max      : 12.601ms
+
+### W2_unsafe workload=write clients=1  2026-07-13T11:48:52Z
+workload=write clients=1 duration=30s
+  ops (measured)   : 109796
+  errors           : 0
+  throughput       : 3659.9 ops/sec
+  latency p50      : 264µs
+  latency p99      : 486µs
+  latency max      : 28.773ms
+
+### W2_unsafe workload=write clients=1  2026-07-13T11:49:27Z
+workload=write clients=1 duration=30s
+  ops (measured)   : 104048
+  errors           : 0
+  throughput       : 3468.3 ops/sec
+  latency p50      : 277µs
+  latency p99      : 520µs
+  latency max      : 31.26ms
+
+### W2_unsafe workload=write clients=1  2026-07-13T11:50:02Z
+workload=write clients=1 duration=30s
+  ops (measured)   : 103678
+  errors           : 0
+  throughput       : 3455.9 ops/sec
+  latency p50      : 278µs
+  latency p99      : 497µs
+  latency max      : 32.108ms
+

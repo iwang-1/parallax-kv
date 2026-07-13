@@ -1,0 +1,21 @@
+=== W1_durable (5 reps each, median across reps; min-max range) ===
+   C  tput_med  tput_min  tput_max  p50_med_ms  p99_med_ms  p99_min  p99_max  total_ops  errors
+   1     137.7     137.5     139.3        7.29        7.82     7.73     8.41      20698       0
+   8     271.5     271.1     274.7       29.57       40.68    40.45    40.96      40825       0
+  64     278.5     274.4     292.6      232.38      351.52   327.99   359.45      42050       0
+ 256     284.9     282.1     286.8      898.68      990.76   988.52   995.52      42733       0
+
+=== W2_unsafe (5 reps each, median across reps; min-max range) ===
+   C  tput_med  tput_min  tput_max  p50_med_ms  p99_med_ms  p99_min  p99_max  total_ops  errors
+   1    3659.9    3455.9    4218.9        0.26        0.50     0.33     0.52     568731       0
+   8    4862.2    4820.6    4871.0        1.60        2.89     2.83     2.91     728330       0
+  64    3618.0    3534.6    3650.2       17.48       21.05    20.71    29.68     541525       0
+ 256    2398.8    2395.3    2405.0      106.43      113.71   111.75   116.05     359888       0
+
+=== R1_read (5 reps each, median across reps; min-max range) ===
+   C  tput_med  tput_min  tput_max  p50_med_ms  p99_med_ms  p99_min  p99_max  total_ops  errors
+   1    4574.0    4541.9    4589.1        0.21        0.29     0.29     0.29     685626       0
+   8   11110.4   10841.7   11160.8        0.70        1.18     1.17     1.26    1658618       0
+  64   11079.7   10909.9   11090.3        5.65        7.26     7.25     8.18    1657077       0
+ 256   11144.3   11127.8   11191.2       22.52       26.96    26.67    27.61    1672459       0
+

@@ -1,0 +1,45 @@
+### R1_read workload=read clients=64  2026-07-13T11:40:50Z
+workload=read clients=64 duration=30s
+  ops (measured)   : 332659
+  errors           : 0
+  throughput       : 11088.6 ops/sec
+  latency p50      : 5.622ms
+  latency p99      : 7.729ms
+  latency max      : 11.157ms
+
+### R1_read workload=read clients=64  2026-07-13T11:41:31Z
+workload=read clients=64 duration=30s
+  ops (measured)   : 332391
+  errors           : 0
+  throughput       : 11079.7 ops/sec
+  latency p50      : 5.644ms
+  latency p99      : 7.264ms
+  latency max      : 29.401ms
+
+### R1_read workload=read clients=64  2026-07-13T11:42:12Z
+workload=read clients=64 duration=30s
+  ops (measured)   : 327297
+  errors           : 0
+  throughput       : 10909.9 ops/sec
+  latency p50      : 5.686ms
+  latency p99      : 8.176ms
+  latency max      : 12.262ms
+
+### R1_read workload=read clients=64  2026-07-13T11:42:54Z
+workload=read clients=64 duration=30s
+  ops (measured)   : 332020
+  errors           : 0
+  throughput       : 11067.3 ops/sec
+  latency p50      : 5.654ms
+  latency p99      : 7.256ms
+  latency max      : 9.734ms
+
+### R1_read workload=read clients=64  2026-07-13T11:43:35Z
+workload=read clients=64 duration=30s
+  ops (measured)   : 332710
+  errors           : 0
+  throughput       : 11090.3 ops/sec
+  latency p50      : 5.648ms
+  latency p99      : 7.246ms
+  latency max      : 19.731ms
+
