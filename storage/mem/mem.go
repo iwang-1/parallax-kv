@@ -127,11 +127,13 @@ func (s *Storage) ApplySnapshot(snap raft.Snapshot) error {
 	if snap.Metadata.Index <= s.offset() {
 		return raft.ErrCompacted
 	}
-	// Retain any entries that extend beyond the snapshot and remain
-	// consistent with it; otherwise drop the log entirely.
-	last := s.offset() + uint64(len(s.entries))
-	if snap.Metadata.Index < last {
-		s.entries = append([]raft.Entry(nil), s.entries[snap.Metadata.Index-s.offset():]...)
+	// A matching (index, term) boundary proves the existing suffix belongs to
+	// the same log. A term mismatch means the entire suffix is divergent.
+	off := s.offset()
+	last := off + uint64(len(s.entries))
+	if snap.Metadata.Index < last &&
+		s.entries[snap.Metadata.Index-off-1].Term == snap.Metadata.Term {
+		s.entries = append([]raft.Entry(nil), s.entries[snap.Metadata.Index-off:]...)
 	} else {
 		s.entries = nil
 	}

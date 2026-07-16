@@ -21,6 +21,8 @@ func TestConfigValidate(t *testing.T) {
 		{"zero heartbeat", func(c *Config) { c.HeartbeatTicks = 0 }, true},
 		{"nil rand", func(c *Config) { c.Rand = nil }, true},
 		{"zero peer id", func(c *Config) { c.Peers = []uint64{1, 0, 3} }, true},
+		{"duplicate peer id", func(c *Config) { c.Peers = []uint64{1, 2, 2} }, true},
+		{"duplicate self id", func(c *Config) { c.Peers = []uint64{1, 1, 2} }, true},
 		{"peers missing self", func(c *Config) { c.Peers = []uint64{2, 3} }, true},
 	}
 	for _, tc := range tests {

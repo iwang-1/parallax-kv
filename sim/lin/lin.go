@@ -285,8 +285,8 @@ func stepKV(st keyState, cmd kv.Command, out outcome) []interface{} {
 // write neither forces nor forbids an effect that nothing observed.
 //
 // The result is Ok (a valid linearization exists), Illegal (none does — a real
-// consistency bug), or Unknown (the bounded search timed out — inconclusive,
-// not a failure). It also returns the LinearizationInfo Porcupine's visualizer
+// consistency bug), or Unknown (the bounded search timed out — inconclusive).
+// It also returns the LinearizationInfo Porcupine's visualizer
 // consumes.
 func Check(h *History) (porcupine.CheckResult, porcupine.LinearizationInfo) {
 	completed := h.Operations()
@@ -314,9 +314,8 @@ func Check(h *History) (porcupine.CheckResult, porcupine.LinearizationInfo) {
 }
 
 // checkTimeout bounds Porcupine's search so a pathological history cannot hang
-// the run. Per-key partitioning keeps realistic histories far under this; on
-// timeout Check returns Unknown, which callers treat as inconclusive rather
-// than a violation.
+// the run. Per-key partitioning keeps realistic histories far under this;
+// callers decide how to report the Unknown verdict returned on timeout.
 const checkTimeout = 20 * time.Second
 
 func describeCommand(c kv.Command) string {

@@ -152,6 +152,32 @@ func TestParseSnapPayloadTorn(t *testing.T) {
 	}
 }
 
+func TestSnapshotPayloadTruncationIntentAndLegacyCompatibility(t *testing.T) {
+	snap := raft.Snapshot{
+		Metadata: raft.SnapshotMetadata{Index: 5, Term: 3},
+		Data:     []byte("state"),
+	}
+	payload := snapPayload(snap, true)
+	stored, err := parseSnapPayload(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.snapshot.Metadata != snap.Metadata || string(stored.snapshot.Data) != "state" || !stored.truncateSuffix {
+		t.Fatalf("stored snapshot = %+v, truncate=%v", stored.snapshot, stored.truncateSuffix)
+	}
+
+	legacy, err := parseSnapPayload(payload[:len(payload)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.snapshot.Metadata != snap.Metadata || string(legacy.snapshot.Data) != "state" {
+		t.Fatalf("legacy snapshot = %+v, want %+v", legacy.snapshot, snap)
+	}
+	if legacy.truncateSuffix {
+		t.Fatal("legacy snapshot unexpectedly requested suffix truncation")
+	}
+}
+
 func TestParseSegmentSeqBad(t *testing.T) {
 	if _, err := parseSegmentSeq("not-a-segment"); err == nil {
 		t.Fatal("expected error for bad segment name")

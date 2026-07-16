@@ -47,10 +47,15 @@ func (c *Config) validate() error {
 		return errors.New("raft: Config.Rand is required")
 	}
 	found := false
+	seen := make(map[uint64]struct{}, len(c.Peers))
 	for _, p := range c.Peers {
 		if p == 0 {
 			return errors.New("raft: peer IDs must be positive")
 		}
+		if _, ok := seen[p]; ok {
+			return errors.New("raft: peer IDs must be unique")
+		}
+		seen[p] = struct{}{}
 		if p == c.ID {
 			found = true
 		}

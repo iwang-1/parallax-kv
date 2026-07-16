@@ -11,42 +11,69 @@ import (
 	"github.com/iwang-1/parallax-kv/raft"
 )
 
+const snapshotFlagTruncateSuffix byte = 1
+
+type storedSnapshot struct {
+	snapshot       raft.Snapshot
+	truncateSuffix bool
+}
+
+type snapshotTestHooks struct {
+	beforeSnapshotWrite      func() error
+	afterSnapshotFileDurable func()
+	beforeTruncationSync     func() error
+}
+
 // Snapshot file format: a single framed record whose payload is
 //
-//	[index uint64][term uint64][dataLen uint32][data ...] + crc32c
+//	[index uint64][term uint64][dataLen uint32][data ...][flags uint8]
 //
 // wrapped in the same {payloadLen, crc32c} frame as WAL records, so a torn
 // snapshot write is detected on load and ignored. Files are named
-// snap-<index>.snap; the highest intact index wins on recovery.
+// snap-<index>.snap; the highest intact index wins on recovery. Legacy files
+// without flags remain readable.
 
 // snapPayload serializes snapshot metadata + data into a record payload
 // (no type tag; snapshot files hold exactly one record).
-func snapPayload(snap raft.Snapshot) []byte {
-	buf := make([]byte, 8+8+4+len(snap.Data))
+func snapPayload(snap raft.Snapshot, truncateSuffix bool) []byte {
+	dataEnd := 8 + 8 + 4 + len(snap.Data)
+	buf := make([]byte, dataEnd+1)
 	binary.BigEndian.PutUint64(buf[0:8], snap.Metadata.Index)
 	binary.BigEndian.PutUint64(buf[8:16], snap.Metadata.Term)
 	binary.BigEndian.PutUint32(buf[16:20], uint32(len(snap.Data)))
 	copy(buf[20:], snap.Data)
+	if truncateSuffix {
+		buf[dataEnd] = snapshotFlagTruncateSuffix
+	}
 	return buf
 }
 
 // parseSnapPayload is the inverse of snapPayload.
-func parseSnapPayload(payload []byte) (raft.Snapshot, error) {
+func parseSnapPayload(payload []byte) (storedSnapshot, error) {
 	if len(payload) < 20 {
-		return raft.Snapshot{}, errTornFrame
+		return storedSnapshot{}, errTornFrame
 	}
 	var snap raft.Snapshot
 	snap.Metadata.Index = binary.BigEndian.Uint64(payload[0:8])
 	snap.Metadata.Term = binary.BigEndian.Uint64(payload[8:16])
 	dataLen := binary.BigEndian.Uint32(payload[16:20])
-	if uint64(20)+uint64(dataLen) != uint64(len(payload)) {
-		return raft.Snapshot{}, errTornFrame
+	dataEnd := uint64(20) + uint64(dataLen)
+	if uint64(len(payload)) != dataEnd && uint64(len(payload)) != dataEnd+1 {
+		return storedSnapshot{}, errTornFrame
 	}
 	if dataLen > 0 {
 		snap.Data = make([]byte, dataLen)
-		copy(snap.Data, payload[20:])
+		copy(snap.Data, payload[20:int(dataEnd)])
 	}
-	return snap, nil
+	stored := storedSnapshot{snapshot: snap}
+	if uint64(len(payload)) == dataEnd+1 {
+		flags := payload[dataEnd]
+		if flags & ^snapshotFlagTruncateSuffix != 0 {
+			return storedSnapshot{}, errTornFrame
+		}
+		stored.truncateSuffix = flags&snapshotFlagTruncateSuffix != 0
+	}
+	return stored, nil
 }
 
 func snapshotName(index uint64) string {
@@ -60,35 +87,64 @@ func (s *Storage) Snapshot() (raft.Snapshot, error) {
 
 // ApplySnapshot implements raft.LogStorage. It writes snap to a new snapshot
 // file atomically (tmp + fsync + rename + dir-fsync), then updates the
-// in-memory mirror, discarding entries the snapshot covers. A stale snapshot
-// (index <= the current snapshot) is rejected with raft.ErrCompacted.
+// in-memory mirror. Entries above the snapshot are retained only when the
+// existing entry at its boundary has the same term. A stale snapshot (index <=
+// the current snapshot) is rejected with raft.ErrCompacted.
 //
-// The WAL is left intact: obsolete entry records are shadowed by the higher
-// snapshot on the next recovery and reclaimed when their segments are pruned.
+// A boundary mismatch is recorded and fsynced in the WAL after the snapshot
+// file is durable, preventing recovery from replaying the divergent suffix.
 func (s *Storage) ApplySnapshot(snap raft.Snapshot) error {
 	if snap.Metadata.Index <= s.offset() {
 		return raft.ErrCompacted
 	}
-	if err := s.writeSnapshotFile(snap); err != nil {
+	off := s.offset()
+	last := off + uint64(len(s.entries))
+	retainSuffix := snap.Metadata.Index < last &&
+		s.entries[snap.Metadata.Index-off-1].Term == snap.Metadata.Term
+	truncateSuffix := snap.Metadata.Index < last && !retainSuffix
+
+	if s.testHooks.beforeSnapshotWrite != nil {
+		if err := s.testHooks.beforeSnapshotWrite(); err != nil {
+			return err
+		}
+	}
+	if err := s.writeSnapshotFile(snap, truncateSuffix); err != nil {
 		return err
 	}
-	last := s.offset() + uint64(len(s.entries))
-	if snap.Metadata.Index < last {
-		s.entries = append([]raft.Entry(nil), s.entries[snap.Metadata.Index-s.offset():]...)
+	if s.testHooks.afterSnapshotFileDurable != nil {
+		s.testHooks.afterSnapshotFileDurable()
+	}
+
+	if retainSuffix {
+		s.entries = append([]raft.Entry(nil), s.entries[snap.Metadata.Index-off:]...)
 	} else {
 		s.entries = nil
 	}
 	s.snapshot = snap
+	s.snapshotTruncationPending = truncateSuffix
+
+	if truncateSuffix {
+		s.buf = appendFrame(s.buf, encodeTruncateSuffix(snap.Metadata))
+		if s.testHooks.beforeTruncationSync != nil {
+			if err := s.testHooks.beforeTruncationSync(); err != nil {
+				return err
+			}
+		}
+		if err := s.syncBuffered(true); err != nil {
+			return err
+		}
+		s.snapshotTruncationPending = false
+	}
 	return nil
 }
 
 // writeSnapshotFile durably writes snap using the atomic tmp+fsync+rename+
 // dir-fsync sequence.
-func (s *Storage) writeSnapshotFile(snap raft.Snapshot) error {
+func (s *Storage) writeSnapshotFile(snap raft.Snapshot, truncateSuffix bool) error {
 	final := filepath.Join(s.dir, snapshotName(snap.Metadata.Index))
 	tmp := final + ".tmp"
 
-	framed := appendFrame(nil, snapPayload(snap))
+	framed := appendFrame(nil, snapPayload(snap, truncateSuffix))
 
 	f, err := os.OpenFile(tmp, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
@@ -135,25 +191,26 @@ func (s *Storage) loadLatestSnapshot() error {
 	}
 	sort.Strings(names) // newest (highest index) last
 	for i := len(names) - 1; i >= 0; i-- {
-		snap, err := readSnapshotFile(filepath.Join(s.dir, names[i]))
+		stored, err := readSnapshotFile(filepath.Join(s.dir, names[i]))
 		if err != nil {
 			continue // torn/corrupt: fall back to an older snapshot
 		}
-		s.snapshot = snap
+		s.snapshot = stored.snapshot
+		s.snapshotTruncationPending = stored.truncateSuffix
 		return nil
 	}
 	return nil
 }
 
 // readSnapshotFile reads and validates a single snapshot file.
-func readSnapshotFile(path string) (raft.Snapshot, error) {
+func readSnapshotFile(path string) (storedSnapshot, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return raft.Snapshot{}, err
+		return storedSnapshot{}, err
 	}
 	payload, _, ferr := readFrame(data, 0)
 	if ferr != nil {
-		return raft.Snapshot{}, ferr
+		return storedSnapshot{}, ferr
 	}
 	return parseSnapPayload(payload)
 }

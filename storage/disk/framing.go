@@ -38,8 +38,9 @@ var castagnoli = crc32.MakeTable(crc32.Castagnoli)
 type recType byte
 
 const (
-	recEntry     recType = 1 // one raft.Entry appended to the log
-	recHardState recType = 2 // a persisted raft.HardState
+	recEntry          recType = 1 // one raft.Entry appended to the log
+	recHardState      recType = 2 // a persisted raft.HardState
+	recTruncateSuffix recType = 3 // discard entries above an index
 )
 
 // errTornFrame signals that a frame is incomplete or corrupt and marks the
@@ -99,6 +100,27 @@ func decodeHardState(body []byte) (raft.HardState, error) {
 		Term:   binary.BigEndian.Uint64(body[0:8]),
 		Vote:   binary.BigEndian.Uint64(body[8:16]),
 		Commit: binary.BigEndian.Uint64(body[16:24]),
+	}, nil
+}
+
+// encodeTruncateSuffix serializes the snapshot boundary that owns the
+// truncation.
+func encodeTruncateSuffix(meta raft.SnapshotMetadata) []byte {
+	buf := make([]byte, 1+8+8)
+	buf[0] = byte(recTruncateSuffix)
+	binary.BigEndian.PutUint64(buf[1:9], meta.Index)
+	binary.BigEndian.PutUint64(buf[9:17], meta.Term)
+	return buf
+}
+
+// decodeTruncateSuffix parses a suffix-truncation record body.
+func decodeTruncateSuffix(body []byte) (raft.SnapshotMetadata, error) {
+	if len(body) != 8+8 {
+		return raft.SnapshotMetadata{}, errTornFrame
+	}
+	return raft.SnapshotMetadata{
+		Index: binary.BigEndian.Uint64(body[0:8]),
+		Term:  binary.BigEndian.Uint64(body[8:16]),
 	}, nil
 }
 

@@ -2,6 +2,7 @@ package sim
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/iwang-1/parallax-kv/raft"
 )
@@ -17,9 +18,9 @@ import (
 //     (index, term) then that entry's command is identical, and the same
 //     (index, term) never carries different data — the core invariant that
 //     makes committed history stable across replicas;
-//   - leader completeness: every entry that has ever been committed (applied
-//     by any node) is present, unchanged, in the durable log of the
-//     highest-term leader — a legitimately elected leader can never be
+//   - leader completeness: every entry covered by a durable commit advance is
+//     present, unchanged, in each relevant leader's durable log, or is covered
+//     by that leader's snapshot — a legitimately elected leader can never be
 //     missing a committed entry;
 //   - applied-prefix agreement: any two nodes' applied entry sequences agree
 //     wherever they overlap (identical (term, data) at each index), i.e. no
@@ -35,78 +36,108 @@ type invariants struct {
 	// leaderByTerm remembers the leader seen for each term to detect a
 	// second, different leader in the same term.
 	leaderByTerm map[uint64]uint64
-	// committed remembers, for every index any node has ever committed
-	// (applied), the entry that was committed there. It is the persistent
-	// authority the leader-completeness check holds each current leader
-	// against; it survives crashes (unlike a node's volatile appliedLog),
-	// so a post-crash divergent commit is still caught.
+	// committed remembers every durable HardState.Commit advance and the
+	// entry fingerprint stored at that index. It is independent of volatile
+	// application progress and survives node crashes.
 	committed map[uint64]logMark
 	// markCache memoizes each node's durable-log marks so the log-matching
 	// and leader-completeness checks — which run every step — re-read the
 	// full log only when it actually changed, not on every tick or message
 	// delivery. Keyed by node ID.
 	markCache map[uint64]*durableCache
-	// foldCursor tracks how many of each node's appliedLog entries have
-	// already been folded into iv.committed, so the leader-completeness fold
-	// is incremental rather than rescanning every applied entry each step. A
-	// crash empties appliedLog; when the length drops below the cursor we
-	// reset to 0 and re-fold on restart (idempotent, since re-applied entries
-	// match the recorded committed marks).
-	foldCursor map[uint64]int
-	// lastSig is the previous step's structural signature; the three
-	// structural checks are skipped while it is unchanged.
-	lastSig uint64
-	sigInit bool
+	// commitCursor makes folding each storage's durable commit records
+	// incremental.
+	commitCursor map[uint64]int
+	// sortedCommitted is the committed index set in ascending order, cached
+	// between steps. iv.committed only ever gains keys (values are enriched in
+	// place, never removed), so the cache is valid whenever its length still
+	// matches the map's — it is rebuilt only when a new committed index
+	// appears, not on every step.
+	sortedCommitted    []uint64
+	sortedCommittedLen int
+	// committedVersion bumps whenever iv.committed changes in any way that can
+	// affect a leader-completeness verdict: a new index added, OR an existing
+	// mark enriched in place (term/digest/commitTerm filled in from a later
+	// durable record). Enrichment does not change the map's length, so a
+	// length check alone cannot detect it — this version does.
+	committedVersion uint64
+	// leaderCheckState memoizes the inputs at which each leader last satisfied
+	// leader completeness. The verdict is a pure function of the leader's
+	// durable log (fixed by its storage generation), the committed set (fixed
+	// by committedVersion), and the leader's term (used to filter which
+	// commitments it is answerable for). An unchanged triple cannot change the
+	// verdict, so the O(committed) scan is skipped. Keyed by node ID.
+	leaderCheckState map[uint64]leaderCheck
+	// lastStructural is an exact per-node observation. Unlike a hash over log
+	// lengths and tail signatures, storage generations cannot hide an
+	// interior same-length rewrite.
+	lastStructural []structuralState
 }
 
-// logMark is a compact (term, data-digest) fingerprint of a log entry.
+// leaderCheck is the memo key for a leader-completeness pass: the inputs that
+// fully determine its outcome.
+type leaderCheck struct {
+	generation       uint64
+	committedVersion uint64
+	term             uint64
+}
+
+// logMark is a compact fingerprint of a committed or durable log entry.
 type logMark struct {
-	term   uint64
-	digest uint64
-	node   uint64 // the node that first established this mark (for messages)
+	term       uint64
+	digest     uint64
+	commitTerm uint64
+	node       uint64 // the node that first established this mark (for messages)
+	termKnown  bool
+	dataKnown  bool
 }
 
-// durableCache is a node's memoized durable-log fingerprint, reused while the
-// log's shape (first/last index) and tail entry are unchanged. Any append or
-// conflict-truncation moves the last index or rewrites the tail term/digest,
-// which invalidates the cache and forces a re-read.
+type structuralState struct {
+	present         bool
+	applied         uint64
+	appliedEntries  int
+	storageGen      uint64
+	committedEvents int
+	crashed         bool
+	leader          bool
+	leaderTerm      uint64
+}
+
+// durableCache is reused only for an exact simulator-observed storage
+// generation. It also carries snapshot metadata used to distinguish a truly
+// missing entry from one compacted into the snapshot.
 type durableCache struct {
-	first, last uint64
-	tailTerm    uint64
-	tailDigest  uint64
-	marks       map[uint64]logMark
+	generation    uint64
+	marks         map[uint64]logMark
+	snapshotIndex uint64
+	snapshotTerm  uint64
+	snapshotData  uint64
 }
 
 func newInvariants(peers []uint64) *invariants {
 	return &invariants{
-		peers:        append([]uint64(nil), peers...),
-		leaderByTerm: make(map[uint64]uint64),
-		committed:    make(map[uint64]logMark),
-		markCache:    make(map[uint64]*durableCache),
-		foldCursor:   make(map[uint64]int),
+		peers:            append([]uint64(nil), peers...),
+		leaderByTerm:     make(map[uint64]uint64),
+		committed:        make(map[uint64]logMark),
+		markCache:        make(map[uint64]*durableCache),
+		commitCursor:     make(map[uint64]int),
+		leaderCheckState: make(map[uint64]leaderCheck),
 	}
 }
 
 // check runs all invariants against the current cluster state.
 //
 // Election safety is cheap and runs every step. The three structural checks
-// (applied-prefix, log matching, leader completeness) only observe a node's
-// applied count, durable last index, and leadership, so their verdict cannot
-// change on a step that moved none of those — the vast majority of steps
-// (timer re-arms, in-flight message deliveries that no-op). A cheap
-// per-cluster signature skips them on such steps, which keeps every relevant
-// change checked while avoiding an O(entries) rescan tens of thousands of
-// times per run.
+// are skipped only when every exact observation is unchanged. In particular,
+// the storage wrapper's generation changes on every successful mutation, so
+// a same-length rewrite cannot be skipped or served from a stale cache.
 func (iv *invariants) check(now VirtualTime, nodes map[uint64]*nodeState) error {
 	if err := iv.checkElectionSafety(nodes); err != nil {
 		return fmt.Errorf("at t=%d: %w", now, err)
 	}
-	sig := iv.structuralSignature(nodes)
-	if iv.sigInit && sig == iv.lastSig {
+	if !iv.structuralChanged(nodes) {
 		return nil
 	}
-	iv.lastSig = sig
-	iv.sigInit = true
 	if err := iv.checkAppliedPrefix(nodes); err != nil {
 		return fmt.Errorf("at t=%d: %w", now, err)
 	}
@@ -119,43 +150,46 @@ func (iv *invariants) check(now VirtualTime, nodes map[uint64]*nodeState) error 
 	return nil
 }
 
-// structuralSignature folds the state the three structural checks depend on
-// into a single digest: per node, its applied count and index, durable last
-// index, and whether it is currently leader (with its leader term). Two steps
-// with equal signatures are indistinguishable to those checks.
-func (iv *invariants) structuralSignature(nodes map[uint64]*nodeState) uint64 {
-	const prime uint64 = 1099511628211
-	h := uint64(14695981039346656037)
-	mix := func(v uint64) { h = (h ^ v) * prime }
-	for _, id := range iv.peers {
+func (iv *invariants) structuralChanged(nodes map[uint64]*nodeState) bool {
+	current := make([]structuralState, len(iv.peers))
+	for i, id := range iv.peers {
 		ns := nodes[id]
 		if ns == nil {
-			mix(0)
 			continue
 		}
-		mix(id)
-		mix(uint64(len(ns.appliedLog)))
-		mix(ns.applied)
-		if ns.storage != nil {
-			last, _ := ns.storage.LastIndex()
-			mix(last)
+		state := structuralState{
+			present:         true,
+			applied:         ns.applied,
+			appliedEntries:  len(ns.appliedLog),
+			storageGen:      storageGeneration(ns.storage),
+			committedEvents: len(storageCommitted(ns.storage)),
+			crashed:         ns.crashed,
 		}
 		if !ns.crashed && ns.node != nil && ns.node.State() == raft.StateLeader {
-			mix(1 + leaderTerm(ns))
-		} else {
-			mix(0)
+			state.leader = true
+			state.leaderTerm = leaderTerm(ns)
+		}
+		current[i] = state
+	}
+	if len(current) == len(iv.lastStructural) {
+		equal := true
+		for i := range current {
+			if current[i] != iv.lastStructural[i] {
+				equal = false
+				break
+			}
+		}
+		if equal {
+			return false
 		}
 	}
-	return h
+	iv.lastStructural = current
+	return true
 }
 
-// checkElectionSafety asserts at most one leader per term. It reads each
-// live leader's term from the entry it most recently applied when
-// available; when a mock node exposes only State we treat the term as
-// unknown (0) and only detect the "two live leaders" degenerate case is
-// left to the core's tests. To keep the check meaningful against both the
-// mock and the real core, we key on the leader's self-reported term via the
-// applied log's last term where present, else skip term attribution.
+// checkElectionSafety asserts at most one leader per term. Leaders expose
+// their current term directly; term zero means the test double cannot
+// attribute leadership to a term yet.
 func (iv *invariants) checkElectionSafety(nodes map[uint64]*nodeState) error {
 	for _, id := range iv.peers {
 		ns := nodes[id]
@@ -225,52 +259,51 @@ func (iv *invariants) checkAppliedPrefix(nodes map[uint64]*nodeState) error {
 	return nil
 }
 
-// durableMarks returns the (index -> logMark) of a node's durable log,
-// reading entries in [FirstIndex, LastIndex] through LogStorage. Entries
-// compacted into a snapshot are not individually available and are skipped;
-// the applied-prefix and committed-map checks cover the compacted region.
-// A crashed node's storage still holds its durable log, so it participates.
-//
-// The result is memoized per node and reused until the log changes: reading
-// the whole log on every one of the tens of thousands of steps in a run would
-// dominate the simulator's cost, so we re-read only when the first/last index
-// or the tail entry's (term, digest) moves — which every append or
-// conflict-truncation does. Callers must NOT mutate the returned map.
-func (iv *invariants) durableMarks(ns *nodeState, id uint64) map[uint64]logMark {
+// durableMarks returns a generation-cached view of a node's durable entries
+// and snapshot boundary. A crashed node's storage still participates.
+func (iv *invariants) durableMarks(ns *nodeState, id uint64) (*durableCache, error) {
 	if ns == nil || ns.storage == nil {
-		return nil
+		return &durableCache{marks: make(map[uint64]logMark)}, nil
 	}
-	last, err := ns.storage.LastIndex()
-	if err != nil || last == 0 {
-		return nil
-	}
-	first, err := ns.storage.FirstIndex()
-	if err != nil || first == 0 {
-		first = 1
-	}
-	tailTerm, terr := ns.storage.Term(last)
-	// Read just the tail entry to fingerprint it for the cache-validity test.
-	var tailDigest uint64
-	if tail, terr2 := ns.storage.Entries(last, last+1); terr2 == nil && len(tail) == 1 {
-		tailDigest = fnv64(tail[0].Data)
-	}
-	if c := iv.markCache[id]; c != nil && terr == nil &&
-		c.first == first && c.last == last && c.tailTerm == tailTerm && c.tailDigest == tailDigest {
-		return c.marks
+	generation := storageGeneration(ns.storage)
+	if cached := iv.markCache[id]; cached != nil && cached.generation == generation {
+		return cached, nil
 	}
 
-	ents, err := ns.storage.Entries(first, last+1)
+	snapshot, err := ns.storage.Snapshot()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("node %d read snapshot metadata: %w", id, err)
 	}
-	marks := make(map[uint64]logMark, len(ents))
-	for _, e := range ents {
-		marks[e.Index] = logMark{term: e.Term, digest: fnv64(e.Data), node: id}
+	view := &durableCache{
+		generation:    generation,
+		marks:         make(map[uint64]logMark),
+		snapshotIndex: snapshot.Metadata.Index,
+		snapshotTerm:  snapshot.Metadata.Term,
+		snapshotData:  fnv64(snapshot.Data),
 	}
-	iv.markCache[id] = &durableCache{
-		first: first, last: last, tailTerm: tailTerm, tailDigest: tailDigest, marks: marks,
+
+	last, err := ns.storage.LastIndex()
+	if err != nil {
+		return nil, fmt.Errorf("node %d read last index: %w", id, err)
 	}
-	return marks
+	first, err := ns.storage.FirstIndex()
+	if err != nil {
+		return nil, fmt.Errorf("node %d read first index: %w", id, err)
+	}
+	if first > 0 && first <= last {
+		entries, err := ns.storage.Entries(first, last+1)
+		if err != nil {
+			return nil, fmt.Errorf("node %d read entries [%d,%d): %w", id, first, last+1, err)
+		}
+		for _, entry := range entries {
+			view.marks[entry.Index] = logMark{
+				term: entry.Term, digest: fnv64(entry.Data), node: id,
+				termKnown: true, dataKnown: true,
+			}
+		}
+	}
+	iv.markCache[id] = view
+	return view, nil
 }
 
 // checkLogMatching asserts the Log Matching Property across durable logs: if
@@ -282,8 +315,26 @@ func (iv *invariants) durableMarks(ns *nodeState, id uint64) map[uint64]logMark 
 // tail). Same index AND same term with different data is a real violation.
 func (iv *invariants) checkLogMatching(nodes map[uint64]*nodeState) error {
 	seen := make(map[uint64]logMark)
+	snapshots := make(map[uint64]logMark)
 	for _, id := range iv.peers {
-		for idx, m := range iv.durableMarks(nodes[id], id) {
+		view, err := iv.durableMarks(nodes[id], id)
+		if err != nil {
+			return err
+		}
+		if view.snapshotIndex > 0 {
+			mark := logMark{
+				term: view.snapshotTerm, digest: view.snapshotData, node: id,
+				termKnown: true, dataKnown: true,
+			}
+			if prev, ok := snapshots[view.snapshotIndex]; ok &&
+				(prev.term != mark.term || prev.digest != mark.digest) {
+				return fmt.Errorf(
+					"snapshot agreement violated at index %d: node %d has (term=%d,digest=%x), node %d has (term=%d,digest=%x)",
+					view.snapshotIndex, prev.node, prev.term, prev.digest, id, mark.term, mark.digest)
+			}
+			snapshots[view.snapshotIndex] = mark
+		}
+		for idx, m := range view.marks {
 			prev, ok := seen[idx]
 			if !ok {
 				seen[idx] = m
@@ -306,76 +357,135 @@ func (iv *invariants) checkLogMatching(nodes map[uint64]*nodeState) error {
 }
 
 // checkLeaderCompleteness asserts the Leader Completeness Property: every
-// entry ever committed (applied by any node, recorded in iv.committed) must
-// still be present, byte-identical, in the durable log of the current leader
-// of the highest term — a legitimately elected leader can never lack a
-// committed entry. It first folds the current applied logs into iv.committed
-// (the running record of what has been committed), checking that no index is
-// ever committed with two different values, then verifies the top leader.
+// durably committed entry must be present and unchanged in every later leader.
+// Commitment comes from persisted HardState.Commit advances, not from the
+// volatile applied index. A missing individual entry is acceptable only when
+// that leader's snapshot metadata covers its index.
 func (iv *invariants) checkLeaderCompleteness(nodes map[uint64]*nodeState) error {
-	// (1) Fold newly applied entries into the persistent committed record,
-	// resuming from each node's fold cursor so this is O(new entries), not
-	// O(whole applied log), per step.
+	// Fold newly persisted commit advances into the run-wide authority.
 	for _, id := range iv.peers {
 		ns := nodes[id]
 		if ns == nil {
 			continue
 		}
-		cur := iv.foldCursor[id]
-		if cur > len(ns.appliedLog) {
-			cur = 0 // appliedLog was reset by a crash; re-fold from the start
+		records := storageCommitted(ns.storage)
+		cur := iv.commitCursor[id]
+		if cur > len(records) {
+			cur = 0
 		}
-		for _, rec := range ns.appliedLog[cur:] {
+		for _, rec := range records[cur:] {
 			prev, ok := iv.committed[rec.index]
 			if ok {
-				if prev.term != rec.term || prev.digest != rec.digest {
+				if (prev.termKnown && rec.termKnown && prev.term != rec.term) ||
+					(prev.dataKnown && rec.dataKnown && prev.digest != rec.digest) {
 					return fmt.Errorf(
 						"committed divergence at index %d: recorded (term=%d,digest=%x) from node %d but node %d committed (term=%d,digest=%x)",
 						rec.index, prev.term, prev.digest, prev.node, id, rec.term, rec.digest)
 				}
+				changed := false
+				if !prev.termKnown && rec.termKnown {
+					prev.term = rec.term
+					prev.termKnown = true
+					changed = true
+				}
+				if !prev.dataKnown && rec.dataKnown {
+					prev.digest = rec.digest
+					prev.dataKnown = true
+					changed = true
+				}
+				if prev.commitTerm == 0 || (rec.commitTerm != 0 && rec.commitTerm < prev.commitTerm) {
+					prev.commitTerm = rec.commitTerm
+					changed = true
+				}
+				if changed {
+					iv.committed[rec.index] = prev
+					iv.committedVersion++
+				}
 			} else {
-				iv.committed[rec.index] = logMark{term: rec.term, digest: rec.digest, node: id}
+				iv.committed[rec.index] = logMark{
+					term: rec.term, digest: rec.digest, commitTerm: rec.commitTerm, node: id,
+					termKnown: rec.termKnown, dataKnown: rec.dataKnown,
+				}
+				iv.committedVersion++
 			}
 		}
-		iv.foldCursor[id] = len(ns.appliedLog)
+		iv.commitCursor[id] = len(records)
 	}
 
-	// (2) Identify the highest-term current leader.
-	var topLeader *nodeState
-	var topTerm uint64
-	var topID uint64
+	// iv.committed only ever gains keys, so the ascending index list is stable
+	// between steps until a new index appears. Rebuild it only then, instead
+	// of re-sorting the whole set on every step.
+	if len(iv.committed) != iv.sortedCommittedLen {
+		iv.sortedCommitted = iv.sortedCommitted[:0]
+		for index := range iv.committed {
+			iv.sortedCommitted = append(iv.sortedCommitted, index)
+		}
+		sort.Slice(iv.sortedCommitted, func(i, j int) bool {
+			return iv.sortedCommitted[i] < iv.sortedCommitted[j]
+		})
+		iv.sortedCommittedLen = len(iv.committed)
+	}
+	indexes := iv.sortedCommitted
+
+	// Check each live leader. Filtering by the term in which the commit was
+	// persisted avoids holding a stale lower-term leader responsible for a
+	// commitment made only after a higher-term leader took over.
 	for _, id := range iv.peers {
 		ns := nodes[id]
 		if ns == nil || ns.crashed || ns.node == nil || ns.node.State() != raft.StateLeader {
 			continue
 		}
-		if t := leaderTerm(ns); t >= topTerm {
-			topTerm, topLeader, topID = t, ns, id
-		}
-	}
-	if topLeader == nil {
-		return nil // no live leader to hold to the property right now
-	}
-
-	// (3) Every committed entry at or below the leader's applied index must
-	// be present and identical in its durable log. Entries beyond what the
-	// leader has itself applied are not yet its responsibility to hold.
-	marks := iv.durableMarks(topLeader, topID)
-	for idx, want := range iv.committed {
-		if idx > topLeader.applied {
+		term := leaderTerm(ns)
+		if term == 0 {
 			continue
 		}
-		got, ok := marks[idx]
-		if !ok {
-			// May be compacted into the leader's snapshot; only a present,
-			// differing entry is a violation.
+		// The verdict is a pure function of the leader's durable log (fixed by
+		// its storage generation), the committed set (fixed by committedVersion),
+		// and this leader's term (which selects the commitments it answers for).
+		// If none changed since this leader last passed, re-scanning cannot find
+		// a new violation — skip it.
+		key := leaderCheck{
+			generation:       storageGeneration(ns.storage),
+			committedVersion: iv.committedVersion,
+			term:             term,
+		}
+		if prev, ok := iv.leaderCheckState[id]; ok && prev == key {
 			continue
 		}
-		if got.term != want.term || got.digest != want.digest {
+		view, err := iv.durableMarks(ns, id)
+		if err != nil {
+			return err
+		}
+		for _, index := range indexes {
+			want := iv.committed[index]
+			if want.commitTerm != 0 && want.commitTerm > term {
+				continue
+			}
+			if got, ok := view.marks[index]; ok {
+				if (want.termKnown && got.term != want.term) ||
+					(want.dataKnown && got.digest != want.digest) {
+					return fmt.Errorf(
+						"leader completeness violated: leader %d (term %d) has conflicting index %d = (term=%d,digest=%x), committed value is (term=%d,digest=%x)",
+						id, term, index, got.term, got.digest, want.term, want.digest)
+				}
+				continue
+			}
+			if view.snapshotIndex >= index {
+				if view.snapshotIndex == index && want.termKnown && view.snapshotTerm != want.term {
+					return fmt.Errorf(
+						"leader completeness violated: leader %d (term %d) snapshot has conflicting index %d term %d, committed term is %d",
+						id, term, index, view.snapshotTerm, want.term)
+				}
+				continue
+			}
 			return fmt.Errorf(
-				"leader completeness violated: leader %d (term %d) has index %d = (term=%d,digest=%x) but committed value is (term=%d,digest=%x)",
-				topID, topTerm, idx, got.term, got.digest, want.term, want.digest)
+				"leader completeness violated: leader %d (term %d) is missing committed index %d; snapshot covers through %d",
+				id, term, index, view.snapshotIndex)
 		}
+		// This leader satisfied completeness for the current inputs; record
+		// them so an unchanged (generation, committedVersion, term) skips the
+		// scan next step.
+		iv.leaderCheckState[id] = key
 	}
 	return nil
 }

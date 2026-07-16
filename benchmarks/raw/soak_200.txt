@@ -1,0 +1,81 @@
+parallax-kv deterministic consistency soak
+============================================
+
+Report completed: 2026-07-14 UTC
+Seed range:       [0, 200)
+Scenarios/seed:   7
+Scenario runs:    1,400
+Client ops:       2,914,245 completed
+Invariant errors: 0
+Porcupine Illegal verdicts: 0
+Consensus bugs discovered: 0
+
+SCENARIOS
+---------
+partition-leader
+partition-random-half
+crash-leader-loop
+30pct-loss
+dup+delay
+mixed-chaos
+snapshot-under-partition
+
+COMMANDS
+--------
+Commands were run from the repository root in 25-seed batches:
+
+go test ./sim -run 'TestScenarioSoak$' -timeout 10m -soak-lo=0   -soak-hi=25  -count=1 -v
+go test ./sim -run 'TestScenarioSoak$' -timeout 10m -soak-lo=25  -soak-hi=50  -count=1 -v
+go test ./sim -run 'TestScenarioSoak$' -timeout 10m -soak-lo=50  -soak-hi=75  -count=1 -v
+go test ./sim -run 'TestScenarioSoak$' -timeout 10m -soak-lo=75  -soak-hi=100 -count=1 -v
+go test ./sim -run 'TestScenarioSoak$' -timeout 10m -soak-lo=100 -soak-hi=125 -count=1 -v
+go test ./sim -run 'TestScenarioSoak$' -timeout 10m -soak-lo=125 -soak-hi=150 -count=1 -v
+go test ./sim -run 'TestScenarioSoak$' -timeout 10m -soak-lo=150 -soak-hi=175 -count=1 -v
+go test ./sim -run 'TestScenarioSoak$' -timeout 10m -soak-lo=175 -soak-hi=200 -count=1 -v
+
+BATCH RESULTS
+-------------
+seeds       runs    client ops    elapsed     result
+[0,25)       175       363407      239.12s     PASS
+[25,50)      175       363408      233.87s     PASS
+[50,75)      175       361746      234.64s     PASS
+[75,100)     175       364123      236.52s     PASS
+[100,125)    175       366087      252.24s     PASS
+[125,150)    175       366660      252.94s     PASS
+[150,175)    175       362657      249.68s     PASS
+[175,200)    175       366157      252.38s     PASS
+             ----      -------     --------
+TOTAL        1400      2914245     1951.39s    PASS
+
+SCOPE AND NON-VACUITY
+---------------------
+Each scenario run drives a 3-node cluster for 8 seconds of virtual time with
+6 simulated clients, 4 contended keys, and Get/Put/Delete/CAS operations.
+Every batch completed more than 361,000 client operations. The full campaign
+averaged approximately 2,081.6 completed operations per scenario run.
+
+TestScenarioSmoke and TestScenarioRegression reject zero-operation runs.
+TestScenarioSoak records aggregate batch operations rather than a per-run
+minimum, so this artifact claims non-vacuity for every batch and for the full
+campaign, not an unrecorded minimum for each individual run.
+
+VERDICT INTERPRETATION
+----------------------
+Every simulated event was checked for election safety, log matching, leader
+completeness, and applied-prefix agreement. No invariant violation occurred.
+
+Every run invoked the Porcupine linearizability checker. Porcupine Illegal is
+a violation and fails the run; there were zero Illegal verdicts. Porcupine
+Unknown is an inconclusive bounded-search timeout and is non-failing in the
+current harness. Batch output does not retain the Ok/Unknown split, so this
+artifact does not claim that all 1,400 histories returned Ok.
+
+The harness-caught applied-term issue was a checker-precision bug: election
+safety used a stale last-applied-entry term as a proxy for current Raft term.
+It was fixed to use raft.Node.Term(). It was not a Raft consensus bug.
+
+SOURCE NOTES
+------------
+Counts and the first six timings are preserved from benchmarks/raw/soak.log.
+The final two batches completed with PASS on 2026-07-14 in 249.68s and
+252.38s, respectively. See CONSISTENCY_REPORT.md for the interpreted report.

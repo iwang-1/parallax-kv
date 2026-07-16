@@ -1,6 +1,8 @@
 package sim
 
 import (
+	"fmt"
+
 	"github.com/iwang-1/parallax-kv/kv"
 	"github.com/iwang-1/parallax-kv/raft"
 	"github.com/iwang-1/parallax-kv/storage/mem"
@@ -41,6 +43,133 @@ func defaultNodeFactory(cfg raft.Config, storage raft.LogStorage) (raftNode, err
 }
 
 func defaultStorageFactory(id uint64) raft.LogStorage { return mem.New() }
+
+// committedRec records what became durably committed when HardState.Commit
+// advanced. Snapshot-covered entries may lack an individual term or digest,
+// but their indexes still matter to leader completeness.
+type committedRec struct {
+	index      uint64
+	term       uint64
+	digest     uint64
+	commitTerm uint64
+	termKnown  bool
+	dataKnown  bool
+}
+
+// trackedStorage wraps the simulator's durable storage. The Raft core still
+// sees exactly LogStorage, while the checker gets two simulator-local facts
+// that LogStorage does not expose: an exact mutation generation and a durable
+// record of commit advances. Embedding preserves the read-only API and keeps
+// this wrapper independent of a concrete storage implementation.
+type trackedStorage struct {
+	raft.LogStorage
+
+	generation    uint64
+	durableCommit uint64
+	committed     []committedRec
+}
+
+func trackStorage(storage raft.LogStorage) raft.LogStorage {
+	if _, ok := storage.(*trackedStorage); ok {
+		return storage
+	}
+	return &trackedStorage{LogStorage: storage}
+}
+
+func (s *trackedStorage) AppendEntries(entries []raft.Entry) error {
+	if err := s.LogStorage.AppendEntries(entries); err != nil {
+		return err
+	}
+	s.generation++
+	return nil
+}
+
+func (s *trackedStorage) ApplySnapshot(snapshot raft.Snapshot) error {
+	if err := s.LogStorage.ApplySnapshot(snapshot); err != nil {
+		return err
+	}
+	s.generation++
+	if snapshot.Metadata.Index > s.durableCommit {
+		// A snapshot proves the covered prefix is committed, but only its
+		// boundary term is available. Emit records before moving the frontier
+		// so a later HardState update cannot make snapshot-only commitments
+		// invisible to the checker.
+		for index := s.durableCommit + 1; index <= snapshot.Metadata.Index; index++ {
+			rec := committedRec{index: index}
+			if index == snapshot.Metadata.Index {
+				rec.term = snapshot.Metadata.Term
+				rec.termKnown = true
+			}
+			s.committed = append(s.committed, rec)
+		}
+		s.durableCommit = snapshot.Metadata.Index
+	}
+	return nil
+}
+
+func (s *trackedStorage) SetHardState(hs raft.HardState) error {
+	if err := s.LogStorage.SetHardState(hs); err != nil {
+		return err
+	}
+	s.generation++
+	return s.recordCommitAdvance(hs.Commit, hs.Term)
+}
+
+func (s *trackedStorage) recordCommitAdvance(commit, commitTerm uint64) error {
+	if commit <= s.durableCommit {
+		// ApplySnapshot runs before SetHardState in a Ready batch. Enrich the
+		// snapshot-derived records once that batch's persisted term arrives,
+		// and append copies so a checker that already folded them sees the
+		// stronger attribution on its next pass.
+		var enriched []committedRec
+		for i := range s.committed {
+			if s.committed[i].index <= commit && s.committed[i].commitTerm == 0 && commitTerm != 0 {
+				s.committed[i].commitTerm = commitTerm
+				enriched = append(enriched, s.committed[i])
+			}
+		}
+		s.committed = append(s.committed, enriched...)
+		return nil
+	}
+
+	snapshot, _ := s.LogStorage.Snapshot()
+	records := make([]committedRec, 0, commit-s.durableCommit)
+	for index := s.durableCommit + 1; index <= commit; index++ {
+		rec := committedRec{index: index, commitTerm: commitTerm}
+		if entries, err := s.LogStorage.Entries(index, index+1); err == nil && len(entries) == 1 {
+			rec.term = entries[0].Term
+			rec.digest = fnv64(entries[0].Data)
+			rec.termKnown = true
+			rec.dataKnown = true
+		} else {
+			if term, err := s.LogStorage.Term(index); err == nil {
+				rec.term = term
+				rec.termKnown = true
+			}
+			if snapshot.Metadata.Index < index {
+				return fmt.Errorf("durable commit advanced to unavailable index %d", index)
+			}
+		}
+		records = append(records, rec)
+	}
+	s.committed = append(s.committed, records...)
+	s.durableCommit = commit
+	return nil
+}
+
+func storageGeneration(storage raft.LogStorage) uint64 {
+	if tracked, ok := storage.(*trackedStorage); ok {
+		return tracked.generation
+	}
+	return 0
+}
+
+func storageCommitted(storage raft.LogStorage) []committedRec {
+	if tracked, ok := storage.(*trackedStorage); ok {
+		return tracked.committed
+	}
+	return nil
+}
 
 // appliedRec is a compact record of one entry applied by a node, kept so
 // the applied-prefix invariant can compare nodes without inspecting their

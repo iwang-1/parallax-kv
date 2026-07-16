@@ -46,11 +46,26 @@ func Open(dir string) (*Storage, error) {
 		}
 	}
 
+	// A mismatch snapshot is durable before its WAL truncation marker. If a
+	// crash interrupted that ordering, no replayed pre-marker suffix is valid.
+	repairSnapshotTruncation := s.snapshotTruncationPending
+	if repairSnapshotTruncation {
+		s.entries = nil
+	}
+
 	// Open (or create) the active segment for appending. Recovery may have
 	// found a torn tail and rewritten a segment; either way we append to the
 	// highest-numbered segment, creating the first one if the dir was empty.
 	if err := s.openActiveSegment(segs); err != nil {
 		return nil, err
+	}
+	if repairSnapshotTruncation {
+		s.buf = appendFrame(s.buf, encodeTruncateSuffix(s.snapshot.Metadata))
+		if err := s.syncBuffered(true); err != nil {
+			s.Close()
+			return nil, fmt.Errorf("disk: repair snapshot truncation: %w", err)
+		}
+		s.snapshotTruncationPending = false
 	}
 	return s, nil
 }
@@ -136,6 +151,16 @@ func (s *Storage) applyRecord(payload []byte) error {
 		}
 		s.hardState = st
 		return nil
+	case recTruncateSuffix:
+		meta, err := decodeTruncateSuffix(body)
+		if err != nil {
+			return err
+		}
+		s.truncateSuffix(meta.Index)
+		if s.snapshotTruncationPending && meta == s.snapshot.Metadata {
+			s.snapshotTruncationPending = false
+		}
+		return nil
 	default:
 		return errTornFrame
 	}
@@ -156,6 +181,20 @@ func (s *Storage) applyEntryRecord(e raft.Entry) error {
 	}
 	s.entries = append(s.entries[:pos], e)
 	return nil
+}
+
+// truncateSuffix discards replayed entries above index. Records after the
+// truncation marker can append a replacement suffix normally.
+func (s *Storage) truncateSuffix(index uint64) {
+	off := s.offset()
+	if index <= off {
+		s.entries = nil
+		return
+	}
+	keep := index - off
+	if keep < uint64(len(s.entries)) {
+		s.entries = s.entries[:keep]
+	}
 }
 
 // truncateSegment truncates path to size bytes and fsyncs it, discarding a
@@ -227,6 +266,12 @@ func (s *Storage) rotateSegment(seq uint64) error {
 // before messages are sent. It rotates to a fresh segment first if the active
 // one has grown past maxSegmentSize.
 func (s *Storage) Sync() error {
+	return s.syncBuffered(!s.noSync)
+}
+
+// syncBuffered writes pending records and optionally issues the durability
+// barrier. Structural records required by an atomic snapshot always force it.
+func (s *Storage) syncBuffered(durable bool) error {
 	if len(s.buf) == 0 {
 		return nil
 	}
@@ -238,7 +283,7 @@ func (s *Storage) Sync() error {
 	if _, err := s.seg.Write(s.buf); err != nil {
 		return fmt.Errorf("disk: append records: %w", err)
 	}
-	if !s.noSync {
+	if durable {
 		if err := s.seg.Sync(); err != nil {
 			return fmt.Errorf("disk: fsync segment: %w", err)
 		}

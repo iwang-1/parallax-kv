@@ -3,6 +3,8 @@ package sim
 import (
 	"flag"
 	"testing"
+
+	"github.com/anishathalye/porcupine"
 )
 
 // The nemesis soak: each named scenario is run across many seeds under both
@@ -64,8 +66,14 @@ const scenarioRunTime = 8 * Second
 // runScenario builds and drives one scenario/seed, then asserts both layers of
 // correctness: no per-step invariant violation (returned by RunUntil) and a
 // linearizable client history (CheckLinearizability). It returns the number of
-// completed client operations so callers can guard against vacuous runs.
-func runScenario(t *testing.T, name string, seed uint64) int {
+// completed client operations and the exact Porcupine verdict so soak output
+// can distinguish Ok, Unknown, and Illegal.
+type scenarioRunResult struct {
+	operations int
+	verdict    porcupine.CheckResult
+}
+
+func runScenario(t *testing.T, name string, seed uint64) scenarioRunResult {
 	t.Helper()
 	s, err := NewScenario(name, seed)
 	if err != nil {
@@ -74,10 +82,14 @@ func runScenario(t *testing.T, name string, seed uint64) int {
 	if err := s.RunUntil(scenarioRunTime); err != nil {
 		t.Fatalf("scenario %s seed 0x%x: invariant violation: %v", name, seed, err)
 	}
-	if err := s.CheckLinearizability(); err != nil {
+	verdict, err := s.checkLinearizability()
+	if err != nil {
 		t.Fatalf("scenario %s seed 0x%x: %v", name, seed, err)
 	}
-	return len(s.History().Operations())
+	return scenarioRunResult{
+		operations: len(s.History().Operations()),
+		verdict:    verdict,
+	}
 }
 
 // TestScenarioSmoke runs every scenario once (seed 1) and asserts each one
@@ -87,12 +99,13 @@ func TestScenarioSmoke(t *testing.T) {
 	for _, name := range ScenarioNames {
 		name := name
 		t.Run(name, func(t *testing.T) {
-			ops := runScenario(t, name, 1)
-			if ops == 0 {
+			result := runScenario(t, name, 1)
+			if result.operations == 0 {
 				t.Fatalf("scenario %s completed zero client ops; the run is vacuous "+
 					"(faults are starving the workload of a quorum)", name)
 			}
-			t.Logf("scenario %s: %d client ops completed, linearizable", name, ops)
+			t.Logf("scenario %s: %d client ops completed, Porcupine verdict %s",
+				name, result.operations, result.verdict)
 		})
 	}
 }
@@ -104,7 +117,7 @@ func TestScenarioSmoke(t *testing.T) {
 func TestScenarioRegression(t *testing.T) {
 	for _, name := range ScenarioNames {
 		for _, seed := range regressionSeeds {
-			if ops := runScenario(t, name, seed); ops == 0 {
+			if result := runScenario(t, name, seed); result.operations == 0 {
 				t.Fatalf("scenario %s seed 0x%x: zero ops (vacuous regression guard)", name, seed)
 			}
 		}
@@ -124,14 +137,23 @@ func TestScenarioSoak(t *testing.T) {
 		t.Skip("set -soak-lo/-soak-hi to run the fresh-seed soak")
 	}
 	total, ops := 0, 0
+	verdicts := map[porcupine.CheckResult]int{
+		porcupine.Ok:      0,
+		porcupine.Unknown: 0,
+		porcupine.Illegal: 0,
+	}
 	for _, name := range ScenarioNames {
 		for seed := lo; seed < hi; seed++ {
-			ops += runScenario(t, name, seed)
+			result := runScenario(t, name, seed)
+			ops += result.operations
+			verdicts[result.verdict]++
 			total++
 		}
 	}
-	t.Logf("soak: %d scenario runs (%d scenarios x seeds [0x%x,0x%x)), %d client ops, zero violations",
-		total, len(ScenarioNames), lo, hi, ops)
+	t.Logf("soak: %d scenario runs (%d scenarios x seeds [0x%x,0x%x)), %d client ops, "+
+		"Porcupine verdicts Ok=%d Unknown=%d Illegal=%d, zero invariant violations",
+		total, len(ScenarioNames), lo, hi, ops,
+		verdicts[porcupine.Ok], verdicts[porcupine.Unknown], verdicts[porcupine.Illegal])
 }
 
 // TestScenarioDeterminism is the determinism double-run gate over the nemesis
@@ -175,7 +197,7 @@ func TestScenarioReplay(t *testing.T) {
 	if *flagScenario == "" {
 		t.Skip("set -scenario and -seed to replay a specific run")
 	}
-	ops := runScenario(t, *flagScenario, *flagSeed)
-	t.Logf("replayed scenario %s seed 0x%x: %d ops, linearizable, no invariant violation",
-		*flagScenario, *flagSeed, ops)
+	result := runScenario(t, *flagScenario, *flagSeed)
+	t.Logf("replayed scenario %s seed 0x%x: %d ops, Porcupine verdict %s, no invariant violation",
+		*flagScenario, *flagSeed, result.operations, result.verdict)
 }

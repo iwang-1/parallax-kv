@@ -178,7 +178,7 @@ func newWith(cfg Config, nf nodeFactory, sf storageFactory) (*Simulator, error) 
 	s.checker = newInvariants(s.peers)
 
 	for _, id := range s.peers {
-		ns := &nodeState{id: id, storage: sf(id)}
+		ns := &nodeState{id: id, storage: trackStorage(sf(id))}
 		if err := s.startNode(ns); err != nil {
 			return nil, fmt.Errorf("sim: starting node %d: %w", id, err)
 		}
@@ -349,17 +349,32 @@ func (s *Simulator) History() *lin.History { return s.hist }
 // proves the client-observed results are consistent with SOME single-copy
 // serial execution — the actual definition of linearizability.
 //
-// It returns nil when a linearization exists (porcupine.Ok) or when the
-// bounded search is inconclusive (porcupine.Unknown — a timeout, not a
-// violation). It returns a replay-tagged error only on porcupine.Illegal: a
-// genuine consistency bug, for which no linearization exists. On a violation
-// the error carries the REPLAY command so the failing run reproduces exactly.
+// Only porcupine.Ok passes. Illegal is a consistency violation; Unknown means
+// the bounded checker could not establish a result. Both failures carry the
+// REPLAY command so the exact history can be reproduced.
 func (s *Simulator) CheckLinearizability() error {
+	_, err := s.checkLinearizability()
+	return err
+}
+
+func (s *Simulator) checkLinearizability() (porcupine.CheckResult, error) {
 	res, _ := lin.Check(s.hist)
-	if res == porcupine.Illegal {
+	return res, s.linearizabilityVerdictError(res)
+}
+
+// linearizabilityVerdictError is deliberately separate from the Porcupine
+// search so verdict policy can be unit-tested without waiting for a timeout.
+func (s *Simulator) linearizabilityVerdictError(result porcupine.CheckResult) error {
+	switch result {
+	case porcupine.Ok:
+		return nil
+	case porcupine.Illegal:
 		return s.withReplay(fmt.Errorf("linearizability violated: client history admits no valid linearization of the kv state machine"))
+	case porcupine.Unknown:
+		return s.withReplay(fmt.Errorf("linearizability check inconclusive: Porcupine search returned Unknown"))
+	default:
+		return s.withReplay(fmt.Errorf("linearizability check returned unsupported verdict %v", result))
 	}
-	return nil
 }
 
 // recordControl records a control-plane event (fault injection) into the

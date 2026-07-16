@@ -122,3 +122,51 @@ func TestApplySnapshotBeyondLog(t *testing.T) {
 		t.Fatalf("LastIndex = %d, want 5", li)
 	}
 }
+
+func TestApplySnapshotMatchingBoundaryRetainsSuffix(t *testing.T) {
+	s := New()
+	s.AppendEntries(ents(
+		[2]uint64{1, 1},
+		[2]uint64{2, 2},
+		[2]uint64{3, 2},
+		[2]uint64{4, 3},
+	))
+
+	if err := s.ApplySnapshot(raft.Snapshot{
+		Metadata: raft.SnapshotMetadata{Index: 2, Term: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Entries(3, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ents([2]uint64{3, 2}, [2]uint64{4, 3})
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Entries = %+v, want %+v", got, want)
+	}
+}
+
+func TestApplySnapshotMismatchingBoundaryDropsSuffix(t *testing.T) {
+	s := New()
+	s.AppendEntries(ents(
+		[2]uint64{1, 1},
+		[2]uint64{2, 2},
+		[2]uint64{3, 2},
+		[2]uint64{4, 3},
+	))
+
+	if err := s.ApplySnapshot(raft.Snapshot{
+		Metadata: raft.SnapshotMetadata{Index: 2, Term: 7},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if last, _ := s.LastIndex(); last != 2 {
+		t.Fatalf("LastIndex = %d, want snapshot boundary 2", last)
+	}
+	if _, err := s.Term(3); !errors.Is(err, raft.ErrUnavailable) {
+		t.Fatalf("Term(3) err = %v, want ErrUnavailable", err)
+	}
+}

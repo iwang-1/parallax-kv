@@ -36,6 +36,9 @@ type raft struct {
 	// readOnly tracks in-flight ReadIndex requests awaiting a heartbeat
 	// quorum confirmation.
 	readOnly *readOnly
+	// pendingReadIndexMessages holds reads received before this leader has
+	// committed an entry from its current term.
+	pendingReadIndexMessages []Message
 
 	// election/heartbeat timers, measured in ticks.
 	electionElapsed  int
@@ -132,6 +135,7 @@ func (r *raft) reset(term uint64) {
 		r.prs[id] = pr
 	}
 	r.readOnly = newReadOnly()
+	r.pendingReadIndexMessages = nil
 }
 
 func (r *raft) resetRandomizedElectionTimeout() {
@@ -175,7 +179,11 @@ func (r *raft) maybeCommit() bool {
 	// The commit index is the highest index replicated on a majority: with
 	// the list sorted ascending, that is the element at position len-quorum.
 	mci := matches[len(matches)-r.quorum()]
-	return r.raftLog.maybeCommit(mci, r.Term)
+	if !r.raftLog.maybeCommit(mci, r.Term) {
+		return false
+	}
+	r.releasePendingReadIndexMessages()
+	return true
 }
 
 func (r *raft) becomeFollower(term uint64, lead uint64) {

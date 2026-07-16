@@ -158,16 +158,40 @@ func (r *raft) stepReadIndex(m Message) error {
 	if r.state != StateLeader {
 		return ErrNotLeader
 	}
+	if !r.committedEntryInCurrentTerm() {
+		r.pendingReadIndexMessages = append(r.pendingReadIndexMessages, m)
+		return nil
+	}
+	r.sendReadIndex(m)
+	return nil
+}
+
+func (r *raft) committedEntryInCurrentTerm() bool {
+	term, err := r.raftLog.term(r.raftLog.committed)
+	return err == nil && term == r.Term
+}
+
+func (r *raft) releasePendingReadIndexMessages() {
+	if r.state != StateLeader || !r.committedEntryInCurrentTerm() {
+		return
+	}
+	pending := r.pendingReadIndexMessages
+	r.pendingReadIndexMessages = nil
+	for _, m := range pending {
+		r.sendReadIndex(m)
+	}
+}
+
+func (r *raft) sendReadIndex(m Message) {
 	// A single-node cluster can serve immediately: it is trivially a
 	// quorum, so record the read at the current commit index.
 	if len(r.peers) == 1 {
 		r.readStates = append(r.readStates, ReadState{Index: r.raftLog.committed, RequestCtx: m.Context})
-		return nil
+		return
 	}
 	// Record the request at the current commit index and broadcast a
 	// confirming heartbeat carrying its context.
 	r.readOnly.addRequest(r.raftLog.committed, m)
 	r.readOnly.recvAck(r.id, m.Context)
 	r.bcastHeartbeatWithCtx(m.Context)
-	return nil
 }

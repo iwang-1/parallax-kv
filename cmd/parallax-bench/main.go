@@ -109,7 +109,8 @@ type benchParams struct {
 }
 
 // runBench spins up one leader-chasing client per worker, seeds the keyspace,
-// then runs the closed loop. Latencies during the warmup window are discarded.
+// then runs the closed loop. Only operations fully contained in the measured
+// window are recorded.
 func runBench(p benchParams) (*aggregate, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -165,17 +166,19 @@ func runBench(p benchParams) (*aggregate, error) {
 				} else {
 					_, opErr = c.Put(opCtx, key, val)
 				}
-				lat := time.Since(t0)
+				finishedAt := time.Now()
+				lat := finishedAt.Sub(t0)
 				opCancel()
+				if !inMeasurementWindow(t0, finishedAt, measureAt, deadline) {
+					continue
+				}
 				if opErr != nil {
 					// Count errors but do not abort: a benchmark against a
 					// cluster mid-election should tolerate transient failures.
 					agg.errors++
 					continue
 				}
-				if t0.After(measureAt) {
-					agg.record(lat)
-				}
+				agg.record(lat)
 			}
 		}(w)
 	}
@@ -195,7 +198,14 @@ func runBench(p benchParams) (*aggregate, error) {
 	return total, nil
 }
 
-func keyFor(i int) string { return fmt.Sprintf("key-%011d", i) }
+func keyFor(i int) string { return fmt.Sprintf("%016x", uint64(i)) }
+
+func inMeasurementWindow(start, end, measureAt, deadline time.Time) bool {
+	return !start.Before(measureAt) &&
+		start.Before(deadline) &&
+		!end.Before(start) &&
+		!end.After(deadline)
+}
 
 func randBytes(n int) []byte {
 	b := make([]byte, n)

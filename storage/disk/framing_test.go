@@ -49,6 +49,24 @@ func TestHardStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTruncateSuffixRoundTrip(t *testing.T) {
+	want := raft.SnapshotMetadata{Index: 42, Term: 7}
+	payload := encodeTruncateSuffix(want)
+	if recType(payload[0]) != recTruncateSuffix {
+		t.Fatalf("tag = %d, want recTruncateSuffix", payload[0])
+	}
+	got, err := decodeTruncateSuffix(payload[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("round trip = %+v, want %+v", got, want)
+	}
+	if _, err := decodeTruncateSuffix(payload[2:]); err != errTornFrame {
+		t.Fatalf("short truncate record err = %v, want errTornFrame", err)
+	}
+}
+
 func TestFrameRoundTrip(t *testing.T) {
 	payload := []byte("some record payload")
 	buf := appendFrame(nil, payload)

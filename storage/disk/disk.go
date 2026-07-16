@@ -4,12 +4,13 @@
 // WAL format: append-only segment files (wal-<seq>.seg) of length-prefixed,
 // CRC32C-framed records (frame = {payloadLen, crc32c} header + payload). A
 // record's payload is a type tag followed by a type-specific body; the log
-// carries entry appends and hard-state updates. The WAL is a logical redo
-// log: replaying every record in order — an entry record installs its entry
-// at its index (truncating any conflicting suffix), a hard-state record
-// overwrites the hard state — reconstructs the durable state. Log truncation
-// therefore needs no explicit record: a new entry at an existing index
-// overwrites it on replay.
+// carries entry appends, hard-state updates, and explicit suffix truncations.
+// The WAL is a logical redo log: replaying every record in order — an entry
+// record installs its entry at its index (truncating any conflicting suffix),
+// a hard-state record overwrites the hard state, and a truncation record drops
+// entries above its index — reconstructs the durable state. Conflicting
+// appends truncate implicitly; snapshot boundary mismatches use an explicit
+// record because no replacement entries may follow immediately.
 //
 // Durability is group commit: writes are buffered in memory and flushed by a
 // single fsync per Ready batch (Sync), covering every record the batch wrote
@@ -36,8 +37,12 @@ type Storage struct {
 	// In-memory mirror of durable state, the source of truth for reads.
 	hardState raft.HardState
 	snapshot  raft.Snapshot
+	// snapshotTruncationPending is set while recovery still needs the WAL
+	// marker named by a mismatch snapshot file.
+	snapshotTruncationPending bool
 	// entries[i] holds the entry at index snapshot.Metadata.Index + 1 + i.
-	entries []raft.Entry
+	entries   []raft.Entry
+	testHooks snapshotTestHooks
 
 	// buf accumulates framed records written since the last Sync.
 	buf []byte
