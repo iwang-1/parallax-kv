@@ -145,7 +145,7 @@ jobs:
       # Build the real binaries, stand up a 3-node localhost cluster, and run a
       # short closed-loop bench in --smoke mode. This proves the whole runtime
       # path compiles and serves traffic; it asserts NOTHING about throughput —
-      # every performance number on the resume comes from benchmarks/RESULTS.md,
+      # every performance number in the README comes from benchmarks/RESULTS.md,
       # generated on the build host and never from CI.
       - name: build binaries
         run: |

@@ -2,7 +2,7 @@
 
 All numbers here were **measured on the build host and committed with their
 raw output** (`benchmarks/raw/`). This file is the single source of truth for
-every performance number quoted on the resume or in the README — nothing is
+every performance number quoted in the README — nothing is
 estimated, rounded up, or carried over from a prior run.
 
 Read the methodology and the loopback caveat **before** the tables. These are
@@ -58,8 +58,8 @@ entirely to quantify exactly what that barrier costs.
   **min–max range**.
 - **Concurrency levels**: C in {1, 8, 64, 256}.
 - **Durability**: the durable workloads (W1) run the production default —
-  group-commit fsync per Ready batch. This is the only mode quoted on the
-  resume. The UNSAFE workload (W2) sets `--unsafe-no-fsync` on the nodes, which
+  group-commit fsync per Ready batch. This is the only mode quoted as a
+  headline number. The UNSAFE workload (W2) sets `--unsafe-no-fsync` on the nodes, which
   skips the WAL fsync; it is published **only** to show the durability cost and
   is labeled UNSAFE everywhere because a crash can lose acknowledged writes.
 - **Errors**: every cell recorded **0 errors** across all 5 reps (no operation
@@ -105,7 +105,7 @@ per-cell raw output is in `benchmarks/raw/<label>_c<N>.txt`.
 
 ## [W1] Committed writes — group-commit fsync (DEFAULT, durable)
 
-This is the mode quoted on the resume. Each committed write is durable on a
+This is the headline durable mode. Each committed write is durable on a
 quorum before it is acknowledged.
 
 | Concurrency | Writes/sec (median) | range | p50 | p99 |
@@ -168,9 +168,9 @@ Reads are ~33x the durable write rate at C=1 (no fsync, no log append) and
 plateau near **~11,100 reads/sec** — the ReadIndex confirmation round and the
 single-goroutine drive loop are the ceiling. p99 stays sub-30 ms even at C=256.
 
-## Resume feed
+## Headline figures
 
-- **Bullet 1** (durable write throughput): quote the **knee, C=8**: 272
+- **Durable write throughput**: quote the **knee, C=8**: 272
   committed writes/sec at 40.7 ms p99 (durable, group-commit fsync). If instead
   the peak-throughput figure is preferred, it is 285 writes/sec at C=256, but its
   ~1 s p99 must be disclosed alongside it — the knee is the more honest number.

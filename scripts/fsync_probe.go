@@ -142,7 +142,7 @@ func printTable(dir string, sorted []time.Duration) {
 	fmt.Printf("  max   %s\n", ms(sorted[len(sorted)-1]))
 	fmt.Printf("  mean  %s\n", ms(mean(sorted)))
 	fmt.Println("----------------------------------------")
-	// The one-liner the resume/RESULTS.md quotes.
+	// The one-liner RESULTS.md quotes.
 	fmt.Printf("4KiB fsync p50=%s p99=%s n=%d\n",
 		ms(percentile(sorted, 50)), ms(percentile(sorted, 99)), len(sorted))
 }

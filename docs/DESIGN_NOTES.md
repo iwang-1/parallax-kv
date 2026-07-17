@@ -1,7 +1,7 @@
 # Design notes
 
-This document explains the implemented design and the tradeoffs worth
-defending in a systems interview. parallax-kv is a single replicated state
+This document explains the implemented design and the tradeoffs behind
+each non-obvious choice. parallax-kv is a single replicated state
 machine: one static Raft group, one leader, and one ordered log. It does not
 implement sharding.
 
