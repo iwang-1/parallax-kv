@@ -1,5 +1,9 @@
 # parallax-kv
 
+[![CI](https://github.com/iwang-1/parallax-kv/actions/workflows/ci.yml/badge.svg)](https://github.com/iwang-1/parallax-kv/actions/workflows/ci.yml)
+[![golangci-lint](https://img.shields.io/badge/golangci--lint-enabled-brightgreen.svg)](.golangci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 parallax-kv is a replicated key-value store in Go with a from-scratch Raft
 core, a durable gRPC runtime, and a deterministic fault simulator. The same
 consensus state machine runs under both real I/O and virtual time, so a failed
