@@ -166,6 +166,8 @@ Three local OS processes, 16-byte keys, 128-byte values, 1,000-key space,
 cell. Values below are medians for the default durable mode, which fsyncs all
 records in each write-bearing `Ready` batch before sending dependent messages.
 
+![Durable write throughput vs concurrency (log scale): group commit reaches a ~272 writes/sec knee at c=8 (41 ms p99); the dashed UNSAFE-no-fsync line above it shows the cost of durability.](docs/benchmark.png)
+
 | Closed-loop clients | Median writes/s | Median p99 |
 |---:|---:|---:|
 | 1 | 138 | 7.8 ms |
