@@ -9,7 +9,7 @@ glibc 2.26, no root). None of this applies to CI, which runs stock
 Go is installed via mise, not on the default PATH:
 
 ```sh
-export PATH="/home/dev/.local/share/mise/installs/go/1.24.13/bin:$PATH"
+export PATH="$HOME/.local/share/mise/installs/go/1.24.13/bin:$PATH"
 go version   # go1.24.13 linux/amd64
 ```
 

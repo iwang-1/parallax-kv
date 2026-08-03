@@ -115,11 +115,13 @@ serves local state. If it loses leadership first, both the Raft read state and
 the server's waiter are discarded.
 
 The full Raft ReadIndex protocol also requires a newly elected leader to know
-that it has committed an entry in its current term before serving a read. The
-core appends that current-term no-op on election, but `stepReadIndex` does not
-currently defer requests until the no-op commits. That explicit gate is a
-remaining correctness-hardening item; the finite soak did not produce an
-`Illegal` history for this schedule, but does not prove the schedule absent.
+that it has committed an entry in its current term before serving a read. That
+gate is implemented. `becomeLeader` appends the current-term no-op, and
+`stepReadIndex` does not start quorum confirmation while
+`committedEntryInCurrentTerm` is false: the request is parked in
+`pendingReadIndexMessages`, and `maybeCommit` calls
+`releasePendingReadIndexMessages` once the no-op commits. `reset` clears the
+queue, so a request still behind the gate cannot survive into a later term.
 
 A lease read would be faster because it could avoid that quorum exchange, but
 its safety depends on bounded clock drift and timing assumptions. ReadIndex
@@ -135,6 +137,10 @@ Focused evidence:
 - `TestReadIndexQuorumConfirm`
 - `TestReadIndexNotReleasedAfterLeadershipLoss`
 - `TestReadIndexOnFollowerRejected`
+- `TestReadIndexWaitsForCurrentTermCommit`
+- `TestReadIndexReleasedAfterCurrentTermCommit`
+- `TestQueuedReadIndexDroppedAfterLeadershipLoss`
+- `TestQueuedReadIndexReleaseReadyOrdersPersistenceBeforeHeartbeat`
 
 ## 5. Client retries and exactly-once apply
 
@@ -266,7 +272,7 @@ CAS.
 
 ### Per-step Raft invariants
 
-After every event, the simulator checks:
+The simulator checks:
 
 - **Election safety:** at most one observed leader for a real Raft term.
 - **Log matching:** equal `(index, term)` entries carry identical commands.
@@ -274,6 +280,14 @@ After every event, the simulator checks:
   entry already observed committed.
 - **Applied-prefix agreement:** replicas never apply different commands at
   the same index.
+
+Election safety is evaluated on every event. The three structural checks are
+evaluated on every event whose observed state differs from the previous one:
+`structuralChanged` compares applied index, applied-entry count, storage
+generation, durable-commit event count, crash state, and leadership/term per
+node, and skips only an exactly-identical step. The generation counter advances
+on every successful storage mutation, so a same-length log rewrite cannot be
+skipped.
 
 ### End-of-run client history
 
@@ -288,13 +302,16 @@ The Porcupine search is bounded to 20 seconds per history:
 - `Ok`: a legal linearization was found.
 - `Illegal`: no legal linearization exists; the run fails with a replay
   command.
-- `Unknown`: the bounded search timed out; this is inconclusive and the
-  current harness does not fail the run.
+- `Unknown`: the bounded search timed out. This is inconclusive rather than a
+  violation, and the current harness fails the run on it too, so an
+  inconclusive search can never be silently counted as a pass
+  (`TestLinearizabilityVerdictMapping` pins the three verdicts to distinct
+  outcomes).
 
-The soak report therefore says **zero `Illegal` verdicts**, not that every
-history received a proof-like `Ok`. Current batch output does not retain an
-`Ok`/`Unknown` count. See
-[`CONSISTENCY_REPORT.md`](../CONSISTENCY_REPORT.md).
+The soak batch line now logs `Ok=`/`Unknown=`/`Illegal=` counts. The committed
+200-seed artifact predates that logging, so the result it supports is **zero
+`Illegal` verdicts**, not a per-verdict breakdown and not a proof-like `Ok` for
+every history. See [`CONSISTENCY_REPORT.md`](../CONSISTENCY_REPORT.md).
 
 ### Non-vacuity
 
@@ -367,8 +384,6 @@ Generated protobuf code is committed, so building and testing do not require
 ## 12. Known production gaps
 
 - One static Raft group only: no sharding and no online membership changes.
-- ReadIndex does not yet explicitly wait for the leader's current-term no-op
-  to commit before confirming a newly elected leader's read.
 - The production driver has a `Ready`-level fsync boundary but no deliberate
   leader-side proposal coalescing.
 - No production snapshot compaction scheduler and no chunked snapshot

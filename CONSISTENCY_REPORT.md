@@ -91,7 +91,11 @@ allowing client operations to complete.
 
 ## What was checked
 
-After every simulated event, the harness checks four Raft safety invariants:
+The harness checks four Raft safety invariants. Election safety runs on every
+simulated event; the other three run on every event whose observed state
+differs from the previous event, and an exactly-unchanged event is skipped as
+redundant (`invariants.structuralChanged`, keyed in part on a storage
+generation counter that advances on every successful mutation):
 
 1. **Election safety:** no two observed nodes lead the same actual Raft term.
 2. **Log matching:** entries sharing `(index, term)` have identical command
@@ -132,11 +136,14 @@ Porcupine's search is bounded to 20 seconds per history:
 - `Illegal` means no valid linearization exists and fails the test.
 - `Unknown` means the bounded search timed out and is inconclusive.
 
-The current harness treats `Unknown` as non-failing and does not emit an
-`Ok`/`Unknown` counter in the batch summary. The exact supported result is
-therefore **zero Porcupine `Illegal` verdicts**, not "1,400 histories formally
-proved linearizable." This distinction does not weaken the zero-violation
-count; it prevents an inconclusive search from being mislabeled as proof.
+The current harness fails a run on `Unknown` as well as on `Illegal`, and its
+batch summary emits `Ok=`/`Unknown=`/`Illegal=` counts. Both changes postdate
+this campaign, whose batch lines recorded only operation counts and "zero
+violations" (see `benchmarks/raw/soak.log`). The exact result this artifact
+supports is therefore **zero Porcupine `Illegal` verdicts**, not "1,400
+histories formally proved linearizable" and not a per-verdict breakdown. This
+distinction does not weaken the zero-violation count; it prevents an
+inconclusive search from being mislabeled as proof.
 
 ## Checker-precision issue
 
@@ -164,6 +171,8 @@ is in [docs/BUG_LEDGER.md](docs/BUG_LEDGER.md).
   and kernel/network behavior are covered separately by race, integration,
   and real-process failover tests.
 - The Porcupine checker can return `Unknown`, as described above.
+- The soak drives virtual time, not wall time: 8 seconds of simulated time per
+  scenario run.
 - Production snapshot compaction scheduling is not implemented.
 - Snapshot transfer is a single message; chunked streaming is not
   implemented.

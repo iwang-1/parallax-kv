@@ -38,7 +38,7 @@ Measured on this host's WAL filesystem (median of 3 runs of n=200; raw in
 | metric | 4 KiB fsync |
 |---|---|
 | p50 | 0.89 ms |
-| p99 | 2.9 ms |
+| p99 | 2.95 ms |
 | min | 0.7–0.8 ms |
 | max | 3.0–3.6 ms |
 
@@ -101,7 +101,12 @@ parallax-bench --cluster ... --clients 8 --duration 30s --warmup 5s --workload r
 ```
 
 The full matrix was driven by `benchmarks/raw/run_matrix.sh` (committed);
-per-cell raw output is in `benchmarks/raw/<label>_c<N>.txt`.
+per-cell raw output is in `benchmarks/raw/<label>_c<N>.txt`. The script has
+since been revised (error capture and a per-cell header that also records the
+repetition number), so its current revision does not emit a byte-identical
+per-cell header to the committed raw files above; the run shape it drives —
+concurrency levels, 30 s duration, 5 s warmup, keyspace, 5 reps — is
+unchanged.
 
 ## [W1] Committed writes — group-commit fsync (DEFAULT, durable)
 
@@ -115,9 +120,14 @@ quorum before it is acknowledged.
 | 64 | 279 | 274–293 | 232 ms | 352 ms |
 | 256 | 285 | 282–287 | 899 ms | 991 ms |
 
-**Reading the table.** At C=1 the write path is latency-bound: p50 = 7.3 ms is
-roughly two fsyncs (leader WAL + follower WAL, in parallel) plus a replication
-round trip, and throughput is 1/latency ≈ 138 writes/sec. As concurrency rises,
+**Reading the table.** At C=1 the write path is latency-bound: throughput is
+1/latency (1/7.29 ms ≈ 137 writes/sec, matching the measured 138). Each write
+pays at least two WAL fsyncs — the leader fsyncs before sending, then the
+follower fsyncs before responding — plus a replication round trip. At the
+measured 0.89 ms fsync p50 that is a ~1.8 ms floor, so it is a lower bound on
+the 7.29 ms, not a full account of it; the remainder is not attributed to a
+specific cost here because these runs did not break the request down further.
+As concurrency rises,
 group commit batches many clients' entries into one fsync per Ready, so
 throughput climbs to a **plateau of ~270–285 writes/sec** — the point where the
 single-fsync-per-batch serialization on the leader is the ceiling. Past the C=8
@@ -142,7 +152,8 @@ Published solely to quantify what group-commit fsync costs.
 | 256 | 2,399 | 2,395–2,405 | 106 ms | 114 ms |
 
 **The narrative.** With the fsync removed, the C=1 write latency floor collapses
-from 7.3 ms to 0.26 ms (26x) and single-client throughput jumps from 138 to
+from a 7.29 ms median p50 to a 0.26 ms median p50, and single-client
+throughput jumps from 138 to
 ~3,660 writes/sec. Peak UNSAFE throughput is ~4,860 writes/sec at C=8 — about
 **18x the durable ceiling at the same concurrency** (272 → 4,862). That gap is
 exactly the price of durability, and it is why the design fights for it with

@@ -21,13 +21,16 @@ scenario, the observed symptom, the root cause, and the fix commit.
 
 ## Consensus bugs found: 0 (to date)
 
-Through the S2c nemesis soak — six scenarios (partition-leader,
-partition-random-half, crash-leader-loop, 30pct-loss, dup+delay, mixed-chaos)
-across 200 fresh seeds plus a fixed regression corpus, ~1.3M+ client
-operations, every run checked for four per-step safety invariants (election
+Through the nemesis soak — seven scenarios (partition-leader,
+partition-random-half, crash-leader-loop, 30pct-loss, dup+delay, mixed-chaos,
+snapshot-under-partition) across 200 fresh seeds, which alone completed
+2,914,245 client operations over 1,400 scenario runs, plus a fixed regression
+corpus — every run checked for the four per-step safety invariants (election
 safety, log matching, leader completeness, applied-prefix agreement) and
 end-of-run Porcupine linearizability — the harness has found **zero genuine
-consensus bugs** in the Raft core.
+consensus bugs** in the Raft core. The counts come from
+`benchmarks/raw/soak_200.txt`; the interpreted report is
+[`CONSISTENCY_REPORT.md`](../CONSISTENCY_REPORT.md).
 
 Per rule 3, this is stated plainly rather than padded. The core was built
 table-driven-test-first (see `raft/*_test.go`: Figure-8 commit rule, ReadIndex
@@ -89,7 +92,9 @@ above.
 - **Fix**: expose the node's real current term via `raftNode.Term()` and key
   election safety on it. This *strengthens* the check (it now compares real
   raft terms, the actual definition of the property) rather than weakening
-  it. Verified: all six scenarios pass the 200-seed soak after the fix.
+  it. Verified: the 200-seed soak passes after the fix. The committed artifact
+  (`benchmarks/raw/soak_200.txt`) covers all seven scenarios, including
+  `snapshot-under-partition`, which was added after this fix.
 
 ## S3 snapshot work: 0 consensus bugs
 

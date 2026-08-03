@@ -10,8 +10,9 @@ consensus state machine runs under both real I/O and virtual time, so a failed
 simulation can be replayed from its scenario and seed.
 
 Implemented scope: one static Raft group with leader election, PreVote, log
-replication, the Figure-8 commit rule, ReadIndex, exactly-once command apply,
-segmented WAL recovery, snapshots, and leader-to-follower `InstallSnapshot`.
+replication, the Figure-8 commit rule, ReadIndex gated on the leader's
+current-term entry, exactly-once command apply, segmented WAL recovery,
+snapshots, and leader-to-follower `InstallSnapshot`.
 This is a systems project with explicit test evidence, not a production-ready
 database.
 
@@ -72,6 +73,13 @@ That ordering prevents a node from sending a vote or replication promise that
 it can forget after a crash. The real `/server` driver uses disk and gRPC; the
 `/sim` driver uses a seeded event queue and virtual time.
 
+A newly elected leader also holds reads until it has committed an entry from
+its own term: `stepReadIndex` queues `MsgReadIndex` in
+`pendingReadIndexMessages`, and `releasePendingReadIndexMessages` drains the
+queue once `committedEntryInCurrentTerm` holds (`raft/step.go`). A queued read
+is discarded if the leader is deposed first. See
+`raft/readindex_gate_test.go`.
+
 ## Quickstart
 
 Requirements: Go 1.24 or newer. Generated protobuf files are committed, so
@@ -126,12 +134,12 @@ Get/Put/Delete/CAS workloads while injecting leader partitions, minority
 partitions, crash/restart loops, 30% message loss, duplication and delay,
 mixed faults, and snapshot catch-up after a partition.
 
-After every simulated step it checks:
-
-- election safety;
-- log matching;
-- leader completeness; and
-- applied-prefix agreement.
+After every simulated step it checks election safety. It also checks log
+matching, leader completeness, and applied-prefix agreement whenever any
+node's observed state changed since the last step; an exactly-unchanged step
+is skipped as redundant, keyed in part on a storage generation counter that
+advances on every successful mutation (`invariants.structuralChanged` in
+`sim/invariants.go`).
 
 At the end of each run, Porcupine searches the observed operation history for
 a legal single-copy execution. Every failure includes a scenario and seed:
@@ -190,9 +198,6 @@ measure the durability barrier's cost and can lose acknowledged writes.
 
 - This is one static Raft group. There is no sharding or online membership
   change.
-- Leaders append a current-term no-op, but `MsgReadIndex` is not explicitly
-  gated on that entry becoming committed. Adding that gate is a remaining
-  correctness-hardening item for newly elected leaders.
 - The production loop drains after each client request; it has a `Ready`-level
   fsync boundary but does not deliberately coalesce multiple leader proposals.
 - Snapshot compaction scheduling is implemented in the simulator, but is not
@@ -202,9 +207,12 @@ measure the durability barrier's cost and can lose acknowledged writes.
   snapshot streaming is not implemented.
 - The gRPC runtime has no TLS, authentication, admission control, or
   operational control plane.
-- Porcupine's search is bounded. `Illegal` is a violation; `Unknown` is
-  inconclusive and is not treated as a failure. The soak output currently
-  records violations and operation counts, not the `Ok`/`Unknown` split.
+- Porcupine's search is bounded to 20 s per history. The current harness
+  fails a run on `Illegal` and also on `Unknown`
+  (`Simulator.linearizabilityVerdictError`), and logs the
+  `Ok`/`Unknown`/`Illegal` split for each soak batch. The committed 200-seed
+  artifact predates that verdict tracking, so it supports "zero `Illegal`
+  verdicts" and not a per-verdict breakdown.
 - Benchmarks are single-host localhost measurements, not multi-region or
   sharded-database results.
 
