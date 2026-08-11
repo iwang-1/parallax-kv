@@ -67,9 +67,8 @@ func TestReadIndexOnFollowerRejected(t *testing.T) {
 	}
 }
 
-// TestReadIndexNotReleasedAfterLeadershipLoss verifies that a leader which
-// loses leadership (steps down) before the confirming quorum never releases
-// the stale read. This is the core linearizability guard of ReadIndex.
+// TestReadIndexNotReleasedAfterLeadershipLoss verifies that a leader which loses leadership (steps down)
+// before the confirming quorum never releases the stale read.
 func TestReadIndexNotReleasedAfterLeadershipLoss(t *testing.T) {
 	nw := bootstrapLeader(t)
 	leader := nw.peers[1]

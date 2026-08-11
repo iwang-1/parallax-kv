@@ -2,11 +2,8 @@ package sim
 
 import "github.com/iwang-1/parallax-kv/raft"
 
-// sendMessage routes one outbound message through the simulated network and
-// schedules its delivery (and any duplicate) as future events. All timing
-// and fault decisions are made now, at send time, drawing from the one
-// seeded RNG; the resulting events carry no further randomness, so the
-// delivery order is fully determined by the (time, seq) keys.
+// SendMessage routes one outbound message through the simulated network and schedules its delivery (and any
+// duplicate) as future events.
 func (s *Simulator) sendMessage(from uint64, m raft.Message) {
 	to := m.To
 	// A message to self is delivered locally without touching the network
@@ -32,10 +29,7 @@ func (s *Simulator) sendMessage(from uint64, m raft.Message) {
 	}
 }
 
-// scheduleDeliver enqueues a delivery of m to node `to` after `delay`. The
-// delivery event steps the message into the destination node if it is up;
-// a crashed destination silently drops it (as a real network would, the
-// packet arrives at a dead host).
+// ScheduleDeliver enqueues a delivery of m to node `to` after `delay`.
 func (s *Simulator) scheduleDeliver(delay VirtualTime, from, to uint64, m raft.Message) {
 	detail := renderMessage(m)
 	s.schedule(delay, "deliver", to, detail, func() {

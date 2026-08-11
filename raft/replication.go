@@ -10,9 +10,8 @@ func (r *raft) bcastAppend() {
 	}
 }
 
-// sendAppend sends the appropriate replication message to the follower id:
-// an InstallSnapshot when the needed entries are compacted, otherwise an
-// AppendEntries carrying entries from pr.Next onward.
+// SendAppend sends the appropriate replication message to the follower id: an InstallSnapshot when the
+// needed entries are compacted, otherwise an AppendEntries carrying entries from pr.Next onward.
 func (r *raft) sendAppend(id uint64) {
 	pr := r.prs[id]
 	if pr == nil {

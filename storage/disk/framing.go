@@ -8,27 +8,13 @@ import (
 	"github.com/iwang-1/parallax-kv/raft"
 )
 
-// WAL record framing.
-//
-// Each record on disk is a frame:
-//
-//	[payloadLen uint32][crc32c uint32][payload ...payloadLen bytes]
-//
-// payloadLen and crc32c are big-endian. crc32c is the Castagnoli CRC of the
-// payload bytes only. The payload's first byte is a record-type tag; the
-// remainder is the type-specific body.
-//
-// A frame whose header cannot be fully read, whose payload is shorter than
-// payloadLen, or whose CRC does not match is a "torn tail": the product of a
-// crash mid-write. Because the WAL is an append-only single-writer log, only
-// the very end can be torn, so recovery treats the first bad frame as the
-// logical end of the log and truncates there.
+// WAL record framing. Each record on disk is a frame: [payloadLen uint32][crc32c uint32][payload
+// ...payloadLen bytes] payloadLen and crc32c are big-endian. crc32c is the Castagnoli CRC of the payload bytes only.
 
 const frameHeaderSize = 8 // payloadLen (4) + crc32c (4)
 
-// sanityMaxPayload bounds a single record's payload so a corrupt length field
-// cannot make recovery attempt a giant allocation; it is far larger than any
-// legitimate record (entry data is application-bounded, kilobytes at most).
+// SanityMaxPayload bounds a single record's payload so a corrupt length field cannot make recovery attempt
+// a giant allocation; it is far larger than any legitimate record.
 const sanityMaxPayload = 64 << 20 // 64 MiB
 
 // castagnoli is the CRC table shared by all framing operations.
@@ -135,9 +121,7 @@ func appendFrame(dst, payload []byte) []byte {
 	return dst
 }
 
-// readFrame reads one frame starting at buf[off]. It returns the payload and
-// the number of bytes consumed. It returns errTornFrame if the frame is
-// incomplete or fails its CRC — the caller treats that as end-of-log.
+// ReadFrame reads one frame starting at buf[off]. It returns the payload and the number of bytes consumed.
 func readFrame(buf []byte, off int) (payload []byte, n int, err error) {
 	if off+frameHeaderSize > len(buf) {
 		return nil, 0, errTornFrame

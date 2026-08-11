@@ -7,15 +7,11 @@ import (
 	"github.com/iwang-1/parallax-kv/raft"
 )
 
-// This file holds the core drive loop the simulator runs for each node:
-// constructing the node, ticking it, draining Ready batches (persist ->
-// send -> apply -> Advance), and delivering messages. Every effect is
-// scheduled through the one event queue so ordering is fully determined by
-// (virtual time, sequence).
+// This file holds the core drive loop the simulator runs for each node: constructing the node, ticking it,
+// draining Ready batches (persist -> send -> apply -> Advance), and delivering messages.
 
-// startNode (re)constructs the volatile half of a node from its durable
-// storage. It is called on initial build and on Restart; the storage is
-// created once (in newWith) and reused so persisted state survives crashes.
+// StartNode (re)constructs the volatile half of a node from its durable storage. It is called on initial
+// build and on Restart; the storage is created once (in newWith) and reused so persisted state survives crashes.
 func (s *Simulator) startNode(ns *nodeState) error {
 	cfg := raft.Config{
 		ID:             ns.id,
@@ -65,9 +61,8 @@ func (s *Simulator) schedule(after VirtualTime, kind string, node uint64, detail
 	})
 }
 
-// scheduleTick schedules the next logical tick for a node. Ticks re-arm
-// themselves for as long as the node is up; a crashed node's tick is a
-// no-op and does not re-arm (Restart re-arms it).
+// ScheduleTick schedules the next logical tick for a node. Ticks re-arm themselves for as long as the node
+// is up; a crashed node's tick is a no-op and does not re-arm (Restart re-arms it).
 func (s *Simulator) scheduleTick(id uint64, after VirtualTime) {
 	s.schedule(after, "tick", id, "", func() {
 		ns := s.nodes[id]
@@ -91,15 +86,8 @@ func (s *Simulator) step(ns *nodeState, m raft.Message) {
 	s.drain(ns)
 }
 
-// drain processes all pending Ready batches for a node, enforcing the
-// persist-before-send ordering the core's contract requires:
-//
-//  1. persist HardState / Entries / Snapshot durably (here: into mem
-//     storage, which models durability across crash/restart),
-//  2. send Messages (scheduled onto the network),
-//  3. apply Snapshot then CommittedEntries to the state machine and
-//     release ReadStates,
-//  4. Advance.
+// Drain processes all pending Ready batches for a node, enforcing the persist-before-send ordering the
+// core's contract requires: 1. persist HardState / Entries / Snapshot durably.
 func (s *Simulator) drain(ns *nodeState) {
 	if ns.crashed || ns.node == nil {
 		return
@@ -107,9 +95,8 @@ func (s *Simulator) drain(ns *nodeState) {
 	for ns.node.HasReady() {
 		rd := ns.node.Ready()
 
-		// (1) Persist. Order matters: snapshot compacts the log prefix,
-		// then new entries extend it, then the hard state records
-		// term/vote/commit.
+		// (1) Persist. Order matters: snapshot compacts the log prefix, then new entries extend it, then the hard
+		// state records term/vote/commit.
 		if rd.Snapshot != nil {
 			if err := ns.storage.ApplySnapshot(*rd.Snapshot); err != nil {
 				s.fail(fmt.Errorf("node %d ApplySnapshot: %w", ns.id, err))
@@ -157,20 +144,14 @@ func (s *Simulator) drain(ns *nodeState) {
 		// (4) Acknowledge.
 		ns.node.Advance(raft.PersistAck{})
 
-		// (5) Compact: once enough entries have been applied past the last
-		// snapshot, snapshot the state machine and truncate the covered log
-		// prefix. The core reads the log through LogStorage and tolerates a
-		// compacted prefix (falling back to InstallSnapshot for followers that
-		// need it), so this is purely a driver-side operation.
+		// (5) Compact: once enough entries have been applied past the last snapshot, snapshot the state machine
+		// and truncate the covered log prefix.
 		s.maybeCompact(ns)
 	}
 }
 
-// maybeCompact snapshots ns's state machine and truncates its log prefix once
-// the applied index has advanced Config.SnapshotEntries past the last
-// snapshot. It is deterministic (draws no randomness) and models a node
-// compacting its own durable log to bound its size. Compaction is best-effort:
-// a benign ErrCompacted race (a newer snapshot already installed) is ignored.
+// MaybeCompact snapshots ns's state machine and truncates its log prefix once the applied index has
+// advanced Config.SnapshotEntries past the last snapshot.
 func (s *Simulator) maybeCompact(ns *nodeState) {
 	if s.cfg.SnapshotEntries == 0 || ns.crashed || ns.sm == nil {
 		return
@@ -208,9 +189,8 @@ func (s *Simulator) maybeCompact(ns *nodeState) {
 	s.recordControl("compact", ns.id, fmt.Sprintf("index=%d term=%d", ns.applied, term))
 }
 
-// applyEntry applies one committed entry to the node's state machine and
-// records it for the applied-prefix invariant. Config/no-op entries carry
-// no client command and only advance the applied index.
+// ApplyEntry applies one committed entry to the node's state machine and records it for the applied-prefix
+// invariant.
 func (s *Simulator) applyEntry(ns *nodeState, e raft.Entry) {
 	if e.Index <= ns.applied {
 		return // already applied (e.g. replayed after restart)
@@ -225,9 +205,7 @@ func (s *Simulator) applyEntry(ns *nodeState, e raft.Entry) {
 			return
 		}
 		res := ns.sm.Apply(cmd)
-		// Only the leader answers clients; followers apply for state but do
-		// not complete client operations. The client layer resolves
-		// completion by (clientID, seq) against the leader that committed it.
+		// Only the leader answers clients; followers apply for state but do not complete client operations.
 		s.completeIfLeader(ns, cmd, res)
 	}
 	// Advancing applied may unblock reads waiting on this index.

@@ -5,10 +5,8 @@ import (
 	"testing"
 )
 
-// driveNode is a minimal single-node driver that closes the Ready/Advance
-// loop against a testStorage, mimicking the persist-before-send discipline:
-// it persists HardState/Entries to storage, then "sends" (records) messages,
-// then applies committed entries, then Advances.
+// DriveNode is a minimal single-node driver that closes the Ready/Advance loop against a testStorage,
+// mimicking the persist-before-send discipline: it persists HardState/Entries to storage, then "sends".
 type driveNode struct {
 	n       *Node
 	st      *testStorage
@@ -51,9 +49,8 @@ func (d *driveNode) pump(t *testing.T) {
 	}
 }
 
-// TestNodeReadyPersistThenApply drives a single-node cluster through a
-// proposal and verifies the Ready contract: HardState/Entries surface,
-// MustSync is set for durable batches, and the entry is applied exactly once.
+// TestNodeReadyPersistThenApply drives a single-node cluster through a proposal and verifies the Ready
+// contract: HardState/Entries surface, MustSync is set for durable batches, and the entry is applied exactly once.
 func TestNodeReadyPersistThenApply(t *testing.T) {
 	cfg := testConfig(1, []uint64{1}, false, 1)
 	d := newDriveNode(t, cfg)
@@ -129,9 +126,8 @@ func TestNodeMustSyncSemantics(t *testing.T) {
 	}
 }
 
-// TestElectionTimeoutRandomizationBounds verifies the randomized election
-// timeout always falls in [ElectionTicks, 2*ElectionTicks) across many draws
-// from the injected Rand.
+// TestElectionTimeoutRandomizationBounds verifies the randomized election timeout always falls in
+// [ElectionTicks, 2*ElectionTicks) across many draws from the injected Rand.
 func TestElectionTimeoutRandomizationBounds(t *testing.T) {
 	cfg := Config{
 		ID:             1,
@@ -163,9 +159,8 @@ func TestElectionTimeoutRandomizationBounds(t *testing.T) {
 	}
 }
 
-// TestDeterministicReplayFromSeed verifies the core is deterministic: two
-// nodes built from equal Configs with identical seeds produce byte-identical
-// message sequences under the same tick schedule.
+// TestDeterministicReplayFromSeed verifies the core is deterministic: two nodes built from equal Configs
+// with identical seeds produce byte-identical message sequences under the same tick schedule.
 func TestDeterministicReplayFromSeed(t *testing.T) {
 	run := func() []Message {
 		cfg := testConfig(1, []uint64{1, 2, 3}, true, 42)

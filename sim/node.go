@@ -8,11 +8,7 @@ import (
 	"github.com/iwang-1/parallax-kv/storage/mem"
 )
 
-// raftNode is the slice of *raft.Node the simulator drives. Depending on
-// the interface rather than the concrete type lets the harness be unit
-// tested against a trivial mock node (an echo state machine) without the
-// real consensus core — the real core is integrated in stage S2. The
-// method set is exactly that of *raft.Node, so *raft.Node satisfies it.
+// RaftNode is the slice of *raft.Node the simulator drives.
 type raftNode interface {
 	Tick()
 	Step(m raft.Message) error
@@ -21,10 +17,7 @@ type raftNode interface {
 	Advance(ack raft.PersistAck)
 	State() raft.StateType
 	Leader() uint64
-	// Term reports the node's current raft term. The invariant checker keys
-	// election safety on it: a leader's role is only meaningful paired with
-	// the term it leads, and the last-applied-entry term is a stale proxy (a
-	// freshly elected leader has not yet applied a current-term entry).
+	// Term reports the node's current raft term.
 	Term() uint64
 }
 
@@ -32,10 +25,8 @@ type raftNode interface {
 // The default wraps raft.NewNode; tests inject a mock.
 type nodeFactory func(cfg raft.Config, storage raft.LogStorage) (raftNode, error)
 
-// storageFactory constructs the durable storage for a node. The object it
-// returns must survive Crash/Restart (that is what models power-loss
-// durability), so the simulator creates it once per node and never on
-// restart. The default is an in-memory storage.
+// StorageFactory constructs the durable storage for a node. The object it returns must survive
+// Crash/Restart (that is what models power-loss durability), so the simulator creates it once per node and never on restart.
 type storageFactory func(id uint64) raft.LogStorage
 
 func defaultNodeFactory(cfg raft.Config, storage raft.LogStorage) (raftNode, error) {
@@ -44,9 +35,8 @@ func defaultNodeFactory(cfg raft.Config, storage raft.LogStorage) (raftNode, err
 
 func defaultStorageFactory(id uint64) raft.LogStorage { return mem.New() }
 
-// committedRec records what became durably committed when HardState.Commit
-// advanced. Snapshot-covered entries may lack an individual term or digest,
-// but their indexes still matter to leader completeness.
+// CommittedRec records what became durably committed when HardState.Commit advanced. Snapshot-covered
+// entries may lack an individual term or digest, but their indexes still matter to leader completeness.
 type committedRec struct {
 	index      uint64
 	term       uint64
@@ -56,11 +46,7 @@ type committedRec struct {
 	dataKnown  bool
 }
 
-// trackedStorage wraps the simulator's durable storage. The Raft core still
-// sees exactly LogStorage, while the checker gets two simulator-local facts
-// that LogStorage does not expose: an exact mutation generation and a durable
-// record of commit advances. Embedding preserves the read-only API and keeps
-// this wrapper independent of a concrete storage implementation.
+// TrackedStorage wraps the simulator's durable storage.
 type trackedStorage struct {
 	raft.LogStorage
 
@@ -90,10 +76,7 @@ func (s *trackedStorage) ApplySnapshot(snapshot raft.Snapshot) error {
 	}
 	s.generation++
 	if snapshot.Metadata.Index > s.durableCommit {
-		// A snapshot proves the covered prefix is committed, but only its
-		// boundary term is available. Emit records before moving the frontier
-		// so a later HardState update cannot make snapshot-only commitments
-		// invisible to the checker.
+		// A snapshot proves the covered prefix is committed, but only its boundary term is available.
 		for index := s.durableCommit + 1; index <= snapshot.Metadata.Index; index++ {
 			rec := committedRec{index: index}
 			if index == snapshot.Metadata.Index {
@@ -117,10 +100,7 @@ func (s *trackedStorage) SetHardState(hs raft.HardState) error {
 
 func (s *trackedStorage) recordCommitAdvance(commit, commitTerm uint64) error {
 	if commit <= s.durableCommit {
-		// ApplySnapshot runs before SetHardState in a Ready batch. Enrich the
-		// snapshot-derived records once that batch's persisted term arrives,
-		// and append copies so a checker that already folded them sees the
-		// stronger attribution on its next pass.
+		// ApplySnapshot runs before SetHardState in a Ready batch.
 		var enriched []committedRec
 		for i := range s.committed {
 			if s.committed[i].index <= commit && s.committed[i].commitTerm == 0 && commitTerm != 0 {
@@ -171,9 +151,8 @@ func storageCommitted(storage raft.LogStorage) []committedRec {
 	return nil
 }
 
-// appliedRec is a compact record of one entry applied by a node, kept so
-// the applied-prefix invariant can compare nodes without inspecting their
-// internal logs.
+// AppliedRec is a compact record of one entry applied by a node, kept so the applied-prefix invariant can
+// compare nodes without inspecting their internal logs.
 type appliedRec struct {
 	index uint64
 	term  uint64
@@ -182,10 +161,7 @@ type appliedRec struct {
 	digest uint64
 }
 
-// nodeState is the simulator's per-node bookkeeping. The durable half
-// (storage) survives a Crash; the volatile half (node, sm, applied,
-// appliedLog) is discarded on Crash and rebuilt on Restart, exactly the
-// split a real crash imposes.
+// NodeState is the simulator's per-node bookkeeping.
 type nodeState struct {
 	id      uint64
 	storage raft.LogStorage
@@ -204,9 +180,8 @@ type nodeState struct {
 	crashed bool
 }
 
-// fnv64 is a small deterministic content digest (FNV-1a) used for the
-// applied-entry records. It avoids pulling entry payloads into the
-// invariant checker while still detecting content divergence.
+// Fnv64 is a small deterministic content digest (fnv-1a) used for the applied-entry records. It avoids
+// pulling entry payloads into the invariant checker while still detecting content divergence.
 func fnv64(b []byte) uint64 {
 	const (
 		offset uint64 = 14695981039346656037

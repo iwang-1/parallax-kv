@@ -6,11 +6,8 @@ import (
 	"github.com/iwang-1/parallax-kv/raft"
 )
 
-// smokeConfig is a low-fault config for the S2a integration smoke tests: a
-// 3-node cluster on a fast, lightly perturbed network. It exercises the REAL
-// raft core (New uses defaultNodeFactory), unlike the mock-driven harness
-// tests. Drops/dups are kept low so a leader reliably emerges and the
-// workload makes steady progress within a few virtual seconds.
+// SmokeConfig is a low-fault config for the S2a integration smoke tests: a 3-node cluster on a fast,
+// lightly perturbed network.
 func smokeConfig(seed uint64) Config {
 	c := baseConfig(seed)
 	c.Net.DropRate = 0.01
@@ -34,9 +31,8 @@ func (s *Simulator) currentLeaders() []uint64 {
 	return out
 }
 
-// leaderElected reports whether at least one node became leader at any point
-// during the run so far (observed via the applied log gaining current-term
-// entries, or a live leader right now).
+// LeaderElected reports whether at least one node became leader at any point during the run so far
+// (observed via the applied log gaining current-term entries, or a live leader right now).
 func (s *Simulator) sawLeader() bool {
 	if len(s.currentLeaders()) > 0 {
 		return true
@@ -51,9 +47,8 @@ func (s *Simulator) sawLeader() bool {
 	return false
 }
 
-// TestSmokeElectAndReplicate is the S2a headline: a 3-node cluster running
-// the real raft core elects a leader, replicates client writes, and completes
-// a basic client workload — all on the deterministic simulator.
+// TestSmokeElectAndReplicate is the S2a headline: a 3-node cluster running the real raft core elects a
+// leader, replicates client writes, and completes a basic client workload — all on the deterministic simulator.
 func TestSmokeElectAndReplicate(t *testing.T) {
 	s, err := New(smokeConfig(1))
 	if err != nil {
@@ -68,10 +63,8 @@ func TestSmokeElectAndReplicate(t *testing.T) {
 		t.Fatal("no leader was ever elected")
 	}
 
-	// (2) Writes were replicated and committed: every live node applied a
-	// nonempty prefix, and the applied prefixes agree (checked every step by
-	// the invariant checker, which returned nil above). Confirm the leader
-	// applied a positive number of entries.
+	// (2) Writes were replicated and committed: every live node applied a nonempty prefix, and the applied
+	// prefixes agree (checked every step by the invariant checker, which returned nil above).
 	maxApplied := uint64(0)
 	for _, id := range s.peers {
 		if ns := s.nodes[id]; ns != nil && ns.applied > maxApplied {
@@ -88,11 +81,8 @@ func TestSmokeElectAndReplicate(t *testing.T) {
 		t.Fatal("real core completed zero client operations")
 	}
 
-	// (4) The client-observed history is linearizable: Porcupine finds a
-	// valid single-copy serialization of every completed operation. This is
-	// the end-to-end correctness assertion — the per-step invariants proved
-	// the replicas agree, this proves what clients saw is consistent with a
-	// serial execution of the KV spec.
+	// (4) The client-observed history is linearizable: Porcupine finds a valid single-copy serialization of
+	// every completed operation.
 	if err := s.CheckLinearizability(); err != nil {
 		t.Fatalf("linearizability check failed: %v", err)
 	}
@@ -100,12 +90,8 @@ func TestSmokeElectAndReplicate(t *testing.T) {
 		maxApplied, len(ops), len(s.Trace()))
 }
 
-// TestSmokeDeterminism is the determinism gate over the REAL core: five fixed
-// seeds, each run twice, must produce byte-identical trace hashes and equal
-// completed-operation counts. This is the property CI's determinism gate
-// enforces; running it over the real consensus core (not just the mock)
-// proves the integration introduced no wall-clock, goroutine, or map-order
-// nondeterminism.
+// TestSmokeDeterminism is the determinism gate over the real core: five fixed seeds, each run twice, must
+// produce byte-identical trace hashes and equal completed-operation counts.
 func TestSmokeDeterminism(t *testing.T) {
 	seeds := []uint64{1, 2, 3, 0xC0FFEE, 0xDEADBEEF}
 	run := func(seed uint64) (string, int) {
@@ -134,13 +120,8 @@ func TestSmokeDeterminism(t *testing.T) {
 	}
 }
 
-// TestSmokeLinearizableBatch runs the real core over a small batch of seeds
-// and asserts every run's client history is linearizable AND that the run
-// completed no invariant violation. This is the correctness-checking layer's
-// headline: per-step safety invariants prove the replicas never diverge, and
-// the end-of-run Porcupine check proves the client-observed results admit a
-// single-copy serial execution of the KV spec. On any violation the failure
-// carries the REPLAY seed so it reproduces exactly.
+// TestSmokeLinearizableBatch runs the real core over a small batch of seeds and asserts every run's client
+// history is linearizable and that the run completed no invariant violation.
 func TestSmokeLinearizableBatch(t *testing.T) {
 	for seed := uint64(0); seed < 12; seed++ {
 		s, err := New(smokeConfig(seed))

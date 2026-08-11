@@ -7,27 +7,8 @@ import (
 	"github.com/iwang-1/parallax-kv/raft"
 )
 
-// This file defines the NEMESIS scenarios: named, seed-parameterized fault
-// programs that drive the simulator through realistic distributed-systems
-// failure modes. A scenario has two halves:
-//
-//   - config: a static mutation of the base run config (network shape,
-//     workload) that holds for the whole run;
-//   - arm: a dynamic fault schedule installed onto a freshly built simulator,
-//     which schedules partitions/crashes/heals/restarts as timeline events.
-//
-// Every fault event is scheduled through the one event queue and every timing
-// choice draws from the run's single seeded RNG, so a scenario run is a pure
-// function of (scenario name, seed): it replays bit-for-bit and its trace hash
-// is stable. That is what makes the REPLAY line in a failure honest.
-//
-// Liveness discipline: each scenario keeps a quorum available across time
-// (single crash outstanding at once with its restart pre-scheduled; only a
-// minority is ever isolated) so the workload keeps making progress and the
-// end-of-run linearizability check is never vacuous. The interesting stress is
-// not a permanent outage but the churn: leaders deposed mid-flight, nodes
-// rejoining with stale logs, messages lost/duplicated/reordered around
-// commits.
+// This file defines the nemesis scenarios: named, seed-parameterized fault programs that drive the
+// simulator through realistic distributed-systems failure modes.
 
 // Scenario is one named nemesis program.
 type Scenario struct {
@@ -107,9 +88,8 @@ var scenarios = map[string]Scenario{
 	},
 }
 
-// ScenarioBaseConfig is the base run config all scenarios build on: a 3-node
-// cluster, a fast lightly-perturbed network, and a small-keyspace mixed
-// workload (contention is what makes linearizability checking bite).
+// ScenarioBaseConfig is the base run config all scenarios build on: a 3-node cluster, a fast
+// lightly-perturbed network, and a small-keyspace mixed workload (contention is what makes linearizability checking bite).
 func ScenarioBaseConfig(seed uint64) Config {
 	return Config{
 		Seed:           seed,
@@ -135,9 +115,8 @@ func ScenarioBaseConfig(seed uint64) Config {
 	}
 }
 
-// NewScenario builds a simulator for the named scenario and seed with the
-// scenario's static config applied and its dynamic fault schedule armed. It
-// does not run the simulation; the caller drives it with RunUntil.
+// NewScenario builds a simulator for the named scenario and seed with the scenario's static config applied
+// and its dynamic fault schedule armed.
 func NewScenario(name string, seed uint64) (*Simulator, error) {
 	sc, ok := scenarios[name]
 	if !ok {
@@ -160,10 +139,7 @@ func NewScenario(name string, seed uint64) (*Simulator, error) {
 
 // --- fault scheduling helpers -------------------------------------------
 
-// scheduleFault schedules fn as a nemesis event after the given delay. The
-// wrapper carries no trace detail of its own; the fault primitives fn invokes
-// (Partition/Crash/Heal/Restart) record their own control events, so the trace
-// shows the faults, not the scheduling scaffolding.
+// ScheduleFault schedules fn as a nemesis event after the given delay.
 func (s *Simulator) scheduleFault(after VirtualTime, fn func()) {
 	s.schedule(after, "", 0, "", fn)
 }
@@ -225,11 +201,8 @@ func (s *Simulator) quorum() int { return len(s.peers)/2 + 1 }
 
 // --- scenario arm functions ---------------------------------------------
 
-// armPartitionLeader repeatedly isolates the current leader into a singleton
-// partition, holds it for a spell (a new leader must emerge in the majority
-// and the deposed leader must not serve stale reads or commit), then heals and
-// re-arms. Only the leader is ever isolated, so the majority always retains a
-// quorum and the workload keeps progressing.
+// ArmPartitionLeader repeatedly isolates the current leader into a singleton partition, holds it for a
+// spell.
 func armPartitionLeader(s *Simulator) {
 	var cycle func()
 	cycle = func() {
@@ -256,10 +229,8 @@ func armPartitionLeader(s *Simulator) {
 	s.scheduleFault(s.drawDur(300*Millisecond, 700*Millisecond), cycle)
 }
 
-// armPartitionRandomHalf repeatedly isolates a random MINORITY subset of nodes
-// from the rest, holds, heals, and re-arms. Isolating a minority (never a
-// quorum) keeps the majority side serving so progress continues; the stress is
-// the isolated nodes falling behind and then catching up on heal.
+// ArmPartitionRandomHalf repeatedly isolates a random minority subset of nodes from the rest, holds, heals,
+// and re-arms.
 func armPartitionRandomHalf(s *Simulator) {
 	var cycle func()
 	cycle = func() {
@@ -301,12 +272,8 @@ func armPartitionRandomHalf(s *Simulator) {
 	s.scheduleFault(s.drawDur(300*Millisecond, 700*Millisecond), cycle)
 }
 
-// armCrashLeaderLoop repeatedly crashes the current leader, holds it down for a
-// downtime window, restarts it (recovering its durable state), waits a gap, and
-// crashes the next leader. At most one node is ever down at a time — its
-// restart is scheduled before the next crash — so a 3-node cluster always keeps
-// two nodes up (a quorum). This exercises leader failover plus crash-recovery
-// of durable state under a live workload.
+// ArmCrashLeaderLoop repeatedly crashes the current leader, holds it down for a downtime window, restarts
+// it (recovering its durable state), waits a gap, and crashes the next leader.
 func armCrashLeaderLoop(s *Simulator) {
 	var cycle func()
 	cycle = func() {
@@ -328,12 +295,8 @@ func armCrashLeaderLoop(s *Simulator) {
 	s.scheduleFault(s.drawDur(300*Millisecond, 700*Millisecond), cycle)
 }
 
-// armMixedChaos layers everything: a lossy, duplicating, reordering network
-// (from the scenario config) PLUS interleaved leader partitions and leader
-// crashes. It alternates between a partition cycle and a crash cycle so that at
-// most one structural fault is active at a time (still quorum-preserving), with
-// the network noise running underneath continuously. This is the kitchen-sink
-// regression: if any bug hides in the interaction of faults, this finds it.
+// ArmMixedChaos layers everything: a lossy, duplicating, reordering network (from the scenario config) plus
+// interleaved leader partitions and leader crashes.
 func armMixedChaos(s *Simulator) {
 	var partitionCycle, crashCycle func()
 
@@ -374,16 +337,8 @@ func armMixedChaos(s *Simulator) {
 	s.scheduleFault(s.drawDur(300*Millisecond, 700*Millisecond), partitionCycle)
 }
 
-// armSnapshotUnderPartition isolates a single follower into a minority
-// partition and holds it there for a LONG window while the majority keeps
-// committing and compacting (SnapshotEntries is small in this scenario's
-// config). By the time the partition heals, the majority has discarded — into
-// its snapshot — the very entries the isolated node still needs, so the
-// rejoining node can only be caught up by an InstallSnapshot rather than an
-// AppendEntries. This is the snapshot flow under a realistic fault, not a hand
-// wired unit test. Only a minority is ever isolated, so the majority always
-// keeps a quorum and the workload never starves. The cycle repeats, isolating
-// a fresh follower each time.
+// ArmSnapshotUnderPartition isolates a single follower into a minority partition and holds it there for a
+// long window while the majority keeps committing and compacting (SnapshotEntries is small in this scenario's config).
 func armSnapshotUnderPartition(s *Simulator) {
 	var cycle func()
 	cycle = func() {

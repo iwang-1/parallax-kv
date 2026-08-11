@@ -7,11 +7,7 @@ import (
 	"github.com/iwang-1/parallax-kv/proto/kvpb"
 )
 
-// kvService adapts the drive loop to the client-facing KVService gRPC API.
-// Every handler routes its operation into the single drive loop and blocks
-// on the answer; a non-leader answer carries a redirect hint so the client
-// can chase the leader. Mutations carry (clientID, seq) for exactly-once
-// apply; reads take the ReadIndex path and never enter the log.
+// KvService adapts the drive loop to the client-facing KVService gRPC API.
 type kvService struct {
 	kvpb.UnimplementedKVServiceServer
 	s *Server
@@ -87,9 +83,8 @@ func (k *kvService) Cas(ctx context.Context, req *kvpb.CasRequest) (*kvpb.CasRes
 		Key:      req.GetKey(),
 		Value:    req.GetValue(),
 	}
-	// expect_absent selects the create-if-absent variant (nil Expect); an
-	// explicit Expect otherwise. A present, non-nil Expect and expect_absent
-	// are mutually exclusive on the wire; expect_absent wins if both set.
+	// Expect_absent selects the create-if-absent variant (nil Expect); an explicit Expect otherwise. A
+	// present, non-nil Expect and expect_absent are mutually exclusive on the wire; expect_absent wins if both set.
 	if !req.GetExpectAbsent() {
 		// Preserve nil-vs-empty: an empty non-nil Expect means "current value
 		// must be empty bytes", distinct from create-if-absent.

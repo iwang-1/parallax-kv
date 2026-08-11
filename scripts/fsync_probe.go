@@ -1,23 +1,5 @@
-// Command fsync_probe measures the cost of a durable 4KiB write on the build
-// host: it writes 4KiB and calls fsync in a loop, timing each fsync, and
-// prints a p50/p99 latency table. This is the methodology artifact behind the
-// fsync disclosure in benchmarks/RESULTS.md — the number that explains why
-// per-entry fsync caps throughput and why group commit is the design's answer.
-//
-// It is deliberately a standalone script (its own main package under scripts/,
-// excluded from the module's test surface) so `go run` reproduces the disk
-// disclosure on any host without touching the library build.
-//
-// Usage:
-//
-//	go run ./scripts                 # 200 samples (matches RESULTS.md), temp dir
-//	go run ./scripts -n 1000         # more samples
-//	go run ./scripts -dir /mnt/nvme  # probe a specific filesystem
-//
-// The probe fsyncs a real file on the target filesystem. It measures the
-// syscall latency only (the 4KiB write buffer is prepared once); the reported
-// numbers therefore reflect the durability barrier the WAL pays per group
-// commit, not write() bandwidth.
+// Command fsync_probe measures the cost of a durable 4KiB write on the build host: it writes 4KiB and calls
+// fsync in a loop, timing each fsync, and prints a p50/p99 latency table.
 package main
 
 import (

@@ -37,10 +37,8 @@ func TestElectionBasic(t *testing.T) {
 	}
 }
 
-// TestLeaderReelectionAfterPartition verifies liveness and election safety
-// across a partition: isolate the leader, a new leader emerges among the
-// remaining majority at a higher term, and when the old leader rejoins it
-// steps down — leaving exactly one leader.
+// TestLeaderReelectionAfterPartition verifies liveness and election safety across a partition: isolate the
+// leader, a new leader emerges among the remaining majority at a higher term, and when the old leader.
 func TestLeaderReelectionAfterPartition(t *testing.T) {
 	nw := newNetwork(t, true, 1, 2, 3)
 	nw.tickUntilLeader(1)
@@ -52,9 +50,8 @@ func TestLeaderReelectionAfterPartition(t *testing.T) {
 	// Partition the leader away from the majority {2,3}.
 	nw.isolate(1)
 
-	// The surviving majority must elect a new leader at a higher term. Both
-	// survivors tick so their leader leases (stickiness) expire and a
-	// PreVote can succeed.
+	// The surviving majority must elect a new leader at a higher term. Both survivors tick so their leader
+	// leases (stickiness) expire and a PreVote can succeed.
 	var majorityLeader uint64
 	for i := 0; i < 6*nw.peers[2].cfg.ElectionTicks && majorityLeader == 0; i++ {
 		nw.peers[2].tick()
@@ -168,12 +165,8 @@ func TestPreVoteDoesNotBumpTerm(t *testing.T) {
 	// up to date; the key invariant is that our term stayed at 5.
 }
 
-// TestPreVoteRejectsPartitionedNode is the canonical PreVote scenario: a node
-// partitioned away has inflated its term via repeated pre-campaigns; on
-// rejoin it must NOT disrupt the stable leader. With PreVote, its high term
-// never reaches peers (PreVote carries Term+1 but never bumps anyone), and
-// peers reject the probe because they are backing a live leader at a term the
-// candidate cannot beat on log freshness.
+// TestPreVoteRejectsPartitionedNode is the canonical PreVote scenario: a node partitioned away has inflated
+// its term via repeated pre-campaigns; on rejoin it must not disrupt the stable leader.
 func TestPreVoteRejectsPartitionedNode(t *testing.T) {
 	r := newTestRaft(t, 1, []uint64{1, 2, 3}, true)
 	// Node 1 is a healthy follower with a live leader (node 2) at term 4 and

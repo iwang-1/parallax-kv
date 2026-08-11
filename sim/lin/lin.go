@@ -1,12 +1,5 @@
-// Package lin records client operation histories and checks them for
-// linearizability with Porcupine (github.com/anishathalye/porcupine).
-//
-// Credit where due: the checker itself — an implementation of the
-// Wing & Gong / Lowe algorithm — is Porcupine, used as a library. The
-// original work here is everything that produces and consumes the
-// histories: the deterministic simulator, the fault scenarios, the KV
-// model, and the consistency report. docs/DESIGN_NOTES.md sketches how
-// the WGL algorithm searches for a valid linearization.
+// Package lin records client operation histories and checks them for linearizability with Porcupine
+// (github.com/anishathalye/porcupine).
 package lin
 
 import (
@@ -20,10 +13,8 @@ import (
 	"github.com/iwang-1/parallax-kv/kv"
 )
 
-// Operation is one completed client operation: what was asked, what came
-// back, and the virtual-time window [Call, Return] it was in flight.
-// Timestamps are sim.VirtualTime values, typed int64 here so that sim can
-// depend on lin and not vice versa.
+// Operation is one completed client operation: what was asked, what came back, and the virtual-time window
+// [Call, Return] it was in flight.
 type Operation struct {
 	ClientID uint64
 	Input    kv.Command
@@ -32,9 +23,8 @@ type Operation struct {
 	Return   int64
 }
 
-// History accumulates operations as clients invoke and complete them. Not
-// safe for concurrent use (the simulator is single-goroutine; real-process
-// tests must serialize externally).
+// History accumulates operations as clients invoke and complete them. Not safe for concurrent use (the
+// simulator is single-goroutine; real-process tests must serialize externally).
 type History struct {
 	ops     []Operation
 	pending map[int]Operation
@@ -56,9 +46,6 @@ func (h *History) Invoke(clientID uint64, cmd kv.Command, at int64) int {
 }
 
 // Complete records the response for a previously invoked operation.
-// Operations never completed (client crashed, request lost) remain
-// pending and are handed to Porcupine as possibly-taking-effect, per the
-// standard treatment of indeterminate operations.
 func (h *History) Complete(id int, res kv.Result, at int64) {
 	op, ok := h.pending[id]
 	if !ok {
@@ -78,9 +65,8 @@ func (h *History) Operations() []Operation {
 	return out
 }
 
-// Pending returns the operations that were invoked but never completed
-// (client crashed, request or response lost). Callers that hand histories
-// to Porcupine treat these as possibly-taking-effect.
+// Pending returns the operations that were invoked but never completed (client crashed, request or response
+// lost).
 func (h *History) Pending() []Operation {
 	ids := make([]int, 0, len(h.pending))
 	for id := range h.pending {
@@ -94,41 +80,22 @@ func (h *History) Pending() []Operation {
 	return out
 }
 
-// keyState is the sequential model's state for a SINGLE key: whether it is
-// present, its current value, and its version (versions start at 1 and
-// increment on each successful mutation; a delete resets the key so the next
-// create starts at 1 again). It is a comparable struct, so Porcupine's
-// default (==) state equality is exactly right and no custom Equal is needed.
+// KeyState is the sequential model's state for a single key: whether it is present, its current value, and
+// its version.
 type keyState struct {
 	present bool
 	value   string
 	version uint64
 }
 
-// outcome is the model's per-operation output. For a completed operation
-// known is true and res is what the client actually observed, which the model
-// validates against the sequential spec. For an operation that was invoked but
-// never completed (client crashed, request or response lost) known is false:
-// the result was never observed, so the model constrains nothing about it and
-// only requires that the transition is one the spec could have taken — this is
-// the standard "possibly-took-effect" treatment of indeterminate operations.
+// Outcome is the model's per-operation output. For a completed operation known is true and res is what the
+// client actually observed, which the model validates against the sequential spec.
 type outcome struct {
 	known bool
 	res   kv.Result
 }
 
-// KVModel returns the Porcupine sequential model of the kv state machine over
-// a single key. The whole history is partitioned by key first: linearizability
-// is a local (per-object) property, so checking each key's sub-history
-// independently is sound and exponentially cheaper than checking the joint
-// history. Within a key, Step replays Get/Put/Delete/CAS against keyState.
-//
-// The model is NONDETERMINISTIC because indeterminate (never-completed)
-// operations branch: a write whose result the client never observed may or may
-// not have taken effect, so both successor states are admissible. This is why
-// a lost write cannot be forced to contradict a later read. ToModel folds the
-// nondeterministic model into the deterministic power-set model Porcupine's
-// checker consumes.
+// KVModel returns the Porcupine sequential model of the kv state machine over a single key.
 func KVModel() porcupine.Model {
 	nm := kvNondeterministicModel()
 	return nm.ToModel()
@@ -201,14 +168,7 @@ func casMatches(st keyState, cmd kv.Command) bool {
 	return st.present && st.value == string(cmd.Expect)
 }
 
-// stepKV returns the set of states admissible after cmd runs against st.
-//
-// For a completed operation (out.known) the observed result must match what
-// the sequential spec produces in st; on a match the single successor state is
-// returned, on a mismatch the empty set rejects this ordering. For an
-// indeterminate operation (never completed) the result is unobserved, so a
-// mutating command branches: {state-after, state-before} — it may or may not
-// have taken effect — while a read leaves state unchanged.
+// StepKV returns the set of states admissible after cmd runs against st.
 func stepKV(st keyState, cmd kv.Command, out outcome) []interface{} {
 	if !out.known {
 		after := applyOp(st, cmd)
@@ -277,17 +237,7 @@ func stepKV(st keyState, cmd kv.Command, out outcome) []interface{} {
 	}
 }
 
-// Check runs Porcupine over the history — completed operations plus any that
-// were invoked but never completed (client crashed, request or response lost).
-// The never-completed ops are given an infinite return time, the standard
-// "possibly-took-effect" treatment: Porcupine is free to place them anywhere
-// at or after their call, including after every observed operation, so a lost
-// write neither forces nor forbids an effect that nothing observed.
-//
-// The result is Ok (a valid linearization exists), Illegal (none does — a real
-// consistency bug), or Unknown (the bounded search timed out — inconclusive).
-// It also returns the LinearizationInfo Porcupine's visualizer
-// consumes.
+// Check runs Porcupine over the history.
 func Check(h *History) (porcupine.CheckResult, porcupine.LinearizationInfo) {
 	completed := h.Operations()
 	pending := h.Pending()
@@ -313,9 +263,8 @@ func Check(h *History) (porcupine.CheckResult, porcupine.LinearizationInfo) {
 	return porcupine.CheckOperationsVerbose(KVModel(), ops, checkTimeout)
 }
 
-// checkTimeout bounds Porcupine's search so a pathological history cannot hang
-// the run. Per-key partitioning keeps realistic histories far under this;
-// callers decide how to report the Unknown verdict returned on timeout.
+// CheckTimeout bounds Porcupine's search so a pathological history cannot hang the run. Per-key
+// partitioning keeps realistic histories far under this; callers decide how to report the Unknown verdict returned on timeout.
 const checkTimeout = 20 * time.Second
 
 func describeCommand(c kv.Command) string {

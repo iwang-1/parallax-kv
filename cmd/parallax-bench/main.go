@@ -1,22 +1,4 @@
-// Command parallax-bench is the closed-loop benchmark client behind
-// benchmarks/RESULTS.md. Methodology lives with the results: fixed key/value
-// sizes (16B keys, 128B values), a warmup discarded, and medians reported
-// across repetitions by the caller.
-//
-// Closed loop: --clients goroutines each issue one operation, wait for its
-// result, then immediately issue the next — so offered concurrency equals
-// --clients. Durability is whatever the server runs (group-commit fsync per
-// Ready batch, the default and only mode); the benchmark does not and cannot
-// change it from the client side.
-//
-// Usage:
-//
-//	parallax-bench --cluster host:port,... --clients 64 --duration 30s --workload write
-//	parallax-bench --cluster ... --smoke        # CI mode: 3s run, asserts nothing
-//
-// --smoke is the CI mode: a short run that prints nothing load-bearing and
-// asserts nothing about throughput (host performance numbers are never
-// asserted in CI).
+// Command parallax-bench is the closed-loop benchmark client behind benchmarks/results.md.
 package main
 
 import (
@@ -108,9 +90,7 @@ type benchParams struct {
 	read     bool
 }
 
-// runBench spins up one leader-chasing client per worker, seeds the keyspace,
-// then runs the closed loop. Only operations fully contained in the measured
-// window are recorded.
+// RunBench spins up one leader-chasing client per worker, seeds the keyspace, then runs the closed loop.
 func runBench(p benchParams) (*aggregate, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -223,10 +203,7 @@ func splitAddrs(s string) []string {
 	return out
 }
 
-// aggregate accumulates latency samples and error counts for the measured
-// window. Latencies are stored raw and percentiles computed by sorting at
-// report time — sample counts are small enough (tens of thousands) that this
-// is simpler and more accurate than a bucketed histogram.
+// Aggregate accumulates latency samples and error counts for the measured window.
 type aggregate struct {
 	latencies []time.Duration
 	count     int64

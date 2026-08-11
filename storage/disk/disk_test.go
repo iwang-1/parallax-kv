@@ -64,10 +64,8 @@ func TestOpenEmpty(t *testing.T) {
 	}
 }
 
-// TestDisableSyncStillWritesRecords covers the UNSAFE benchmark mode: with the
-// fsync disabled, Sync must still write the buffered records to the segment (so
-// a graceful reopen recovers them) — it only skips the durability barrier. This
-// is the [W2] path; it is never used in production.
+// TestDisableSyncStillWritesRecords covers the unsafe benchmark mode: with the fsync disabled, Sync must
+// still write the buffered records to the segment (so a graceful reopen recovers them) — it only skips the.
 func TestDisableSyncStillWritesRecords(t *testing.T) {
 	dir := t.TempDir()
 	s := mustOpen(t, dir)

@@ -1,17 +1,5 @@
-// Command parallaxctl is the CLI client for a parallax-kv cluster. It dials
-// every node in --cluster and follows leader redirects automatically, so any
-// address may be given.
-//
-// Usage:
-//
-//	parallaxctl --cluster localhost:8101,localhost:8102,localhost:8103 get KEY
-//	parallaxctl --cluster ...                                          put KEY VALUE
-//	parallaxctl --cluster ...                                          del KEY
-//	parallaxctl --cluster ...                                          cas KEY EXPECT VALUE
-//	parallaxctl --cluster ...                                          cas --create KEY VALUE
-//
-// cas without --create requires the key's current value to equal EXPECT;
-// cas --create requires the key to be absent.
+// Command parallaxctl is the CLI client for a parallax-kv cluster. It dials every node in --cluster and
+// follows leader redirects automatically, so any address may be given.
 package main
 
 import (

@@ -1,8 +1,7 @@
 package raft
 
-// Step is the single entry point for all inputs. It first applies the
-// term-comparison rules from the Raft paper (§3.3, §4.2.3 PreVote), then
-// dispatches to the role-specific handler.
+// Step is the single entry point for all inputs. It first applies the term-comparison rules from the Raft
+// paper (§3.3, §4.2.3 PreVote), then dispatches to the role-specific handler.
 func (r *raft) Step(m Message) error {
 	// Handle local messages (no term) directly.
 	switch m.Type {
@@ -12,12 +11,8 @@ func (r *raft) Step(m Message) error {
 		return r.stepReadIndex(m)
 	}
 
-	// Leader-stickiness disruption check (§4.2.3). If we are currently
-	// backing a leader and our election timer has not expired, we have an
-	// effective lease: reject any vote or pre-vote before the term rules can
-	// step us down. This is what stops a node that rejoins from a partition
-	// with an inflated term — even with an up-to-date log — from deposing a
-	// healthy leader. A repeat vote for the SAME candidate is still allowed.
+	// Leader-stickiness disruption check (§4.2.3). If we are currently backing a leader and our election timer
+	// has not expired, we have an effective lease: reject any vote or pre-vote before the term rules can step us down.
 	if (m.Type == MsgVote || m.Type == MsgPreVote) &&
 		r.lead != None && r.Vote != m.From &&
 		r.electionElapsed < r.cfg.ElectionTicks {
@@ -103,9 +98,8 @@ func msgRespType(t MessageType) MessageType {
 	}
 }
 
-// handleVoteRequest answers a MsgVote or MsgPreVote. It grants when the
-// candidate's log is at least as up-to-date and (for real votes) the node has
-// not already voted for someone else this term.
+// HandleVoteRequest answers a MsgVote or MsgPreVote. It grants when the candidate's log is at least as
+// up-to-date and (for real votes) the node has not already voted for someone else this term.
 func (r *raft) handleVoteRequest(m Message) {
 	respType := MsgVoteResp
 	if m.Type == MsgPreVote {
@@ -116,9 +110,8 @@ func (r *raft) handleVoteRequest(m Message) {
 	var grant bool
 	switch m.Type {
 	case MsgPreVote:
-		// PreVote grant condition: the probe would campaign at a term ahead
-		// of ours with an at-least-as-up-to-date log. A PreVote never mutates
-		// our state.
+		// PreVote grant condition: the probe would campaign at a term ahead of ours with an
+		// at-least-as-up-to-date log.
 		grant = upToDate && m.Term > r.Term
 	case MsgVote:
 		canVote := r.Vote == m.From || (r.Vote == None && r.lead == None) || m.Term > r.Term

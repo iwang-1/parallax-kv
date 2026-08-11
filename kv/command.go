@@ -65,13 +65,8 @@ type Result struct {
 // allowing the wire format to evolve without ambiguity.
 const commandEncodingVersion byte = 1
 
-// EncodeCommand serializes a Command for storage in a raft.Entry's Data.
-// The encoding is deterministic: equal Commands produce equal bytes.
-//
-// Layout (big-endian): version(1) | ClientID(8) | Seq(8) | Op(1) |
-// keyLen(4)+key | Value presence(1)[+len(4)+bytes] |
-// Expect presence(1)[+len(4)+bytes]. The presence flags preserve the
-// nil-vs-empty distinction that OpCAS's Expect depends on.
+// EncodeCommand serializes a Command for storage in a raft.Entry's Data. The encoding is deterministic:
+// equal Commands produce equal bytes.
 func EncodeCommand(c Command) []byte {
 	buf := make([]byte, 0, 1+8+8+1+4+len(c.Key)+(1+4+len(c.Value))+(1+4+len(c.Expect)))
 	buf = append(buf, commandEncodingVersion)

@@ -1,17 +1,5 @@
-// Package server is the production runtime around the pure raft core: it
-// owns the drive loop that the simulator owns in tests.
-//
-// Drive loop contract (per Ready batch, order is load-bearing):
-//
-//	persist HardState/Entries/Snapshot (group-commit fsync if MustSync)
-//	  -> send Messages
-//	  -> apply Snapshot + CommittedEntries to the kv state machine
-//	  -> release ReadStates whose index has been applied
-//	  -> Advance
-//
-// Persist-BEFORE-send is the safety-critical edge: a vote or log promise
-// sent before it is durable can be un-made by a crash. The integration
-// tests exercise this ordering explicitly.
+// Package server is the production runtime around the pure raft core: it owns the drive loop that the
+// simulator owns in tests.
 package server
 
 import (
@@ -38,9 +26,8 @@ type Config struct {
 	// Peers maps every node ID in the cluster (including ID) to its
 	// peer-RPC listen address.
 	Peers map[uint64]string
-	// ClientAddrs maps node IDs to client-facing addresses, used for
-	// leader redirect hints. May be nil if redirects should carry only
-	// the leader ID.
+	// ClientAddrs maps node IDs to client-facing addresses, used for leader redirect hints. May be nil if
+	// redirects should carry only the leader ID.
 	ClientAddrs map[uint64]string
 	// DataDir is the WAL + snapshot directory.
 	DataDir string
@@ -53,9 +40,7 @@ type Config struct {
 	// ElectionTicks/HeartbeatTicks feed raft.Config.
 	ElectionTicks  int
 	HeartbeatTicks int
-	// UnsafeNoSync disables the per-Ready WAL fsync. UNSAFE: a crash can lose
-	// acknowledged writes. Exists only for the [W2] benchmark variant that
-	// quantifies the durability cost; never enable it in production.
+	// UnsafeNoSync disables the per-Ready WAL fsync. unsafe: a crash can lose acknowledged writes.
 	UnsafeNoSync bool
 }
 

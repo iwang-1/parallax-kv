@@ -15,24 +15,10 @@ var (
 	ErrNotLeader = errors.New("raft: node is not the leader")
 )
 
-// LogStorage is the durable state the Raft core reads from and the driver
-// writes to. The core only READS through this interface during operation;
-// all writes (AppendEntries, SetHardState, ApplySnapshot) are performed by
-// the driver while processing a Ready batch, keeping the core free of I/O.
-//
-// Implementations: storage/disk (segmented WAL + snapshot files) for
-// production, storage/mem for the deterministic simulator.
-//
-// Index conventions: the log conceptually starts at index 1. FirstIndex is
-// the first index still individually available (everything below it lives
-// only in the snapshot); LastIndex is the highest index written. Term(i)
-// is defined for i in [FirstIndex-1, LastIndex] — FirstIndex-1 is served
-// from snapshot metadata.
+// LogStorage is the durable state the Raft core reads from and the driver writes to.
 type LogStorage interface {
-	// AppendEntries persists new log entries. Entries must be
-	// contiguous with the existing log; on conflict (an incoming entry's
-	// index already exists with a different term) the implementation
-	// truncates the old suffix first.
+	// AppendEntries persists new log entries. Entries must be contiguous with the existing log; on conflict
+	// (an incoming entry's index already exists with a different term) the implementation truncates the old suffix first.
 	AppendEntries(entries []Entry) error
 	// SetHardState persists the hard state.
 	SetHardState(st HardState) error

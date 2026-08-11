@@ -1,6 +1,5 @@
-// Client-facing KV API. Every mutating request carries (client_id, seq)
-// for exactly-once apply dedup; every response carries leader-redirect
-// info so clients can chase the current leader.
+// Client-facing KV API. Every mutating request carries (client_id, seq) for exactly-once apply dedup; every
+// response carries leader-redirect info so clients can chase the current leader.
 syntax = "proto3";
 
 package parallax.kv;
@@ -11,9 +10,8 @@ option go_package = "github.com/iwang-1/parallax-kv/proto/kvpb";
 message RequestHeader {
   // client_id is a positive session ID unique to this client.
   uint64 client_id = 1;
-  // seq is strictly increasing per client_id, at most one in flight;
-  // retries reuse the same seq. Ignored for Get (reads are idempotent
-  // and take the ReadIndex path, not the log).
+  // Seq is strictly increasing per client_id, at most one in flight; retries reuse the same seq. Ignored
+  // for Get (reads are idempotent and take the ReadIndex path, not the log).
   uint64 seq = 2;
 }
 

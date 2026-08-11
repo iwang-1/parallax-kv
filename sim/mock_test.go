@@ -6,22 +6,7 @@ import (
 	"github.com/iwang-1/parallax-kv/raft"
 )
 
-// mockNode is a deterministic stand-in for the real Raft core used to unit
-// test the harness itself. It is NOT Raft: it is a fixed-leader replicator
-// whose only job is to make the harness exercise every path — proposals,
-// replication messages over the network, retransmission, acks, commits,
-// committed-entry apply, ReadIndex release, and crash/restart recovery —
-// without depending on the (separately built) consensus core.
-//
-// Model: the lowest-ID node is the permanent leader. A proposal appends an
-// entry to the leader's log and commits it immediately (single-node-quorum
-// simplification). On every Tick the leader (re)sends, to each follower,
-// the next entry the follower is missing, so dropped/reordered deliveries
-// and post-partition catch-up all resolve exactly as real replication would
-// at the harness's level of abstraction. A follower appends the exactly-next
-// entry and acks its new last index; the leader advances that follower's
-// nextIndex on the ack. Everything is a pure function of inputs and
-// persisted storage, so replays are bit-identical.
+// MockNode is a deterministic stand-in for the real Raft core used to unit test the harness itself.
 type mockNode struct {
 	id      uint64
 	peers   []uint64
@@ -75,9 +60,8 @@ func newMockNode(cfg raft.Config, storage raft.LogStorage) (raftNode, error) {
 
 func (m *mockNode) isLeader() bool { return m.id == m.leader }
 
-// Tick drives leader retransmission: send each follower its next missing
-// entry. This is what lets followers catch up after drops, reorders, or a
-// healed partition.
+// Tick drives leader retransmission: send each follower its next missing entry. This is what lets followers
+// catch up after drops, reorders, or a healed partition.
 func (m *mockNode) Tick() {
 	if !m.isLeader() {
 		return

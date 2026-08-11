@@ -1,18 +1,5 @@
-// Package sim is the deterministic simulation harness: a single-goroutine
-// event loop that owns N raft Nodes, their in-memory storages, a simulated
-// network, a workload of virtual clients, fault injectors, invariant
-// checkers, and a canonical trace recorder.
-//
-// Determinism contract: a whole run is a pure function of Config — in
-// particular of Config.Seed. One seeded *rand.Rand (owned by the event
-// loop) is the ONLY source of nondeterminism: election jitter, message
-// delays, drops, duplicates, fault timing, and workload choices all draw
-// from it, in event order. Events are dispatched from a priority queue
-// keyed (virtual time, sequence number), so ties break deterministically.
-// Any failure therefore replays bit-for-bit from its seed, and CI's
-// determinism gate byte-compares trace hashes across reruns to catch a
-// stray time.Now(), goroutine, or map-order dependence the moment it
-// leaks in.
+// Package sim is the deterministic simulation harness: a single-goroutine event loop that owns N raft
+// Nodes, their in-memory storages, a simulated network, a workload of virtual clients, fault injectors.
 package sim
 
 import (
@@ -79,11 +66,8 @@ type Config struct {
 	HeartbeatTicks int
 	// TickEvery is the virtual duration between raft Ticks.
 	TickEvery VirtualTime
-	// SnapshotEntries triggers log compaction: once a node's applied index
-	// has advanced this many entries beyond its last snapshot, the driver
-	// snapshots the state machine, persists it, and truncates the covered log
-	// prefix. Zero disables compaction. The trigger draws no randomness, so a
-	// run stays a pure function of Seed.
+	// SnapshotEntries triggers log compaction: once a node's applied index has advanced this many entries
+	// beyond its last snapshot, the driver snapshots the state machine, persists it, and truncates the covered log prefix.
 	SnapshotEntries uint64
 	Net             NetworkConfig
 	Workload        WorkloadConfig
@@ -99,10 +83,8 @@ type Verdict struct {
 	ExtraDelay VirtualTime
 }
 
-// MessageHook lets a scenario intercept every in-flight message (after the
-// built-in drop/dup/delay distributions). Hooks MUST be deterministic:
-// they may inspect the message and use state derived from the run, but
-// never the wall clock or their own RNG.
+// MessageHook lets a scenario intercept every in-flight message (after the built-in drop/dup/delay
+// distributions).
 type MessageHook func(from, to uint64, m raft.Message) Verdict
 
 // TraceEvent is one canonically serialized event in the run's trace. The
@@ -146,18 +128,13 @@ type Simulator struct {
 	newStorage storageFactory
 }
 
-// New validates cfg and builds the cluster: nodes, mem storages, network,
-// workload clients, trace recorder, and invariant checkers. It uses the
-// real raft core and in-memory storage; tests that need a mock node build
-// the Simulator through newWith.
+// New validates cfg and builds the cluster: nodes, mem storages, network, workload clients, trace recorder,
+// and invariant checkers.
 func New(cfg Config) (*Simulator, error) {
 	return newWith(cfg, defaultNodeFactory, defaultStorageFactory)
 }
 
-// newWith is the construction seam shared by New and the harness tests. The
-// node and storage factories are injected so the event loop, network, fault
-// injectors, workload, trace, and invariant machinery can be exercised
-// against a trivial mock node (stage S1) and later the real core (S2).
+// NewWith is the construction seam shared by New and the harness tests.
 func newWith(cfg Config, nf nodeFactory, sf storageFactory) (*Simulator, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -220,18 +197,15 @@ func (c *Config) validate() error {
 // Now returns the current virtual time.
 func (s *Simulator) Now() VirtualTime { return s.now }
 
-// Step dispatches the next event from the queue and advances virtual time
-// to its firing time. It returns false when no events remain. Invariants
-// are checked after every step; the first violation is latched and
-// retrievable via Err (and returned by RunUntil).
+// Step dispatches the next event from the queue and advances virtual time to its firing time. It returns
+// false when no events remain.
 func (s *Simulator) Step() bool {
 	e := s.queue.pop()
 	if e == nil {
 		return false
 	}
-	// Virtual time is monotonic: events never fire before the current time
-	// because the queue is ordered by (at, seq) and every scheduled event
-	// is at >= now.
+	// Virtual time is monotonic: events never fire before the current time because the queue is ordered by
+	// (at, seq) and every scheduled event is at >= now.
 	s.now = e.at
 	if e.detail != "" || e.kind != "" {
 		s.rec.record(TraceEvent{At: e.at, Seq: e.seq, Kind: e.kind, Node: e.node, Detail: e.detail})
@@ -245,9 +219,8 @@ func (s *Simulator) Step() bool {
 	return true
 }
 
-// RunUntil steps the simulation until virtual time t (inclusive) or event
-// exhaustion, returning the first invariant violation observed. The error
-// message includes the replay seed so any failure can be re-run.
+// RunUntil steps the simulation until virtual time t (inclusive) or event exhaustion, returning the first
+// invariant violation observed.
 func (s *Simulator) RunUntil(t VirtualTime) error {
 	for s.firstErr == nil {
 		next := s.queue.peek()
@@ -262,10 +235,7 @@ func (s *Simulator) RunUntil(t VirtualTime) error {
 // Err returns the first invariant violation observed so far (nil if none).
 func (s *Simulator) Err() error { return s.firstErr }
 
-// withReplay wraps an error with the exact command needed to reproduce it.
-// When the run belongs to a named nemesis scenario, the hint names the
-// scenario and seed so it maps directly onto TestScenarioReplay, the
-// single-run replay harness.
+// WithReplay wraps an error with the exact command needed to reproduce it.
 func (s *Simulator) withReplay(err error) error {
 	if s.scenario != "" {
 		return fmt.Errorf("%w\nREPLAY: scenario=%s seed=0x%x "+
@@ -275,10 +245,7 @@ func (s *Simulator) withReplay(err error) error {
 	return fmt.Errorf("%w\nREPLAY: seed=0x%x (go test ./sim -run TestScenarioReplay -seed=0x%x)", err, s.cfg.Seed, s.cfg.Seed)
 }
 
-// Partition splits the network into the given groups; messages between
-// groups are dropped until Heal. Nodes not listed form an implicit final
-// group. The partition takes effect immediately and is recorded in the
-// trace (topology changes are part of the deterministic run).
+// Partition splits the network into the given groups; messages between groups are dropped until Heal.
 func (s *Simulator) Partition(groups ...[]uint64) {
 	s.net.setPartition(groups)
 	s.recordControl("partition", 0, renderGroups(groups))
@@ -290,10 +257,8 @@ func (s *Simulator) Heal() {
 	s.recordControl("heal", 0, "")
 }
 
-// Crash stops node id, discarding ALL volatile state (the raft node, its
-// in-flight messages) while keeping state persisted through LogStorage —
-// exactly what a power failure keeps. In-flight messages already scheduled
-// for delivery to a crashed node are dropped at delivery time.
+// Crash stops node id, discarding all volatile state (the raft node, its in-flight messages) while keeping
+// state persisted through LogStorage — exactly what a power failure keeps.
 func (s *Simulator) Crash(id uint64) {
 	ns, ok := s.nodes[id]
 	if !ok || ns.crashed {
@@ -307,9 +272,8 @@ func (s *Simulator) Crash(id uint64) {
 	s.recordControl("crash", id, "")
 }
 
-// Restart rebuilds node id from its persisted state and rejoins it: a fresh
-// raft node recovers term/vote/log from the durable storage that survived
-// the crash, and its tick timer is rescheduled.
+// Restart rebuilds node id from its persisted state and rejoins it: a fresh raft node recovers
+// term/vote/log from the durable storage that survived the crash, and its tick timer is rescheduled.
 func (s *Simulator) Restart(id uint64) {
 	ns, ok := s.nodes[id]
 	if !ok || !ns.crashed {
@@ -325,33 +289,22 @@ func (s *Simulator) Restart(id uint64) {
 	s.drain(ns)
 }
 
-// SetMessageHook installs h as the scenario-level message interceptor
-// (nil to remove). Hooks run after the built-in drop/dup/delay
-// distributions and must be deterministic.
+// SetMessageHook installs h as the scenario-level message interceptor (nil to remove). Hooks run after the
+// built-in drop/dup/delay distributions and must be deterministic.
 func (s *Simulator) SetMessageHook(h MessageHook) { s.net.hook = h }
 
 // Trace returns the recorded events so far.
 func (s *Simulator) Trace() []TraceEvent { return s.rec.snapshot() }
 
-// TraceHash returns the lowercase-hex SHA-256 of the canonically
-// serialized trace — equal Configs MUST yield equal hashes, and CI
-// enforces it.
+// TraceHash returns the lowercase-hex sha-256 of the canonically serialized trace.
 func (s *Simulator) TraceHash() string { return s.rec.hash() }
 
 // History returns the client operation history for linearizability
 // checking (invoke/return pairs stamped with virtual times).
 func (s *Simulator) History() *lin.History { return s.hist }
 
-// CheckLinearizability runs Porcupine over the recorded client history and
-// reports whether it admits a valid linearization of the KV state machine.
-// It is the end-of-run consistency assertion every real-core run makes: the
-// per-step invariants prove the replicas agree on an applied log, and this
-// proves the client-observed results are consistent with SOME single-copy
-// serial execution — the actual definition of linearizability.
-//
-// Only porcupine.Ok passes. Illegal is a consistency violation; Unknown means
-// the bounded checker could not establish a result. Both failures carry the
-// REPLAY command so the exact history can be reproduced.
+// CheckLinearizability runs Porcupine over the recorded client history and reports whether it admits a
+// valid linearization of the KV state machine.
 func (s *Simulator) CheckLinearizability() error {
 	_, err := s.checkLinearizability()
 	return err

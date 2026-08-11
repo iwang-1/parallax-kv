@@ -9,10 +9,7 @@ import (
 	"github.com/iwang-1/parallax-kv/client"
 )
 
-// harness is an in-process 3-node cluster. Unlike the e2e package (which
-// spawns real OS processes), this runs the servers as goroutines in the test
-// binary so the drive loop, transport, and apply path are all covered by the
-// -race detector.
+// Harness is an in-process 3-node cluster.
 type harness struct {
 	servers []*Server
 	cancels []context.CancelFunc
@@ -66,10 +63,8 @@ func startHarness(t *testing.T) *harness {
 	return h
 }
 
-// TestInProcessClusterReadWrite exercises the full write/read path across an
-// in-process 3-node cluster under -race: put a spread of keys, overwrite
-// some, delete some, CAS some, and verify linearizable reads reflect every
-// acknowledged mutation.
+// TestInProcessClusterReadWrite exercises the full write/read path across an in-process 3-node cluster
+// under -race: put a spread of keys, overwrite some, delete some, cas some, and verify linearizable reads.
 func TestInProcessClusterReadWrite(t *testing.T) {
 	h := startHarness(t)
 
@@ -144,10 +139,8 @@ func TestInProcessClusterReadWrite(t *testing.T) {
 	}
 }
 
-// TestExactlyOnceRetry verifies the session table dedups a retried write:
-// the client keeps its (ClientID, Seq), so re-submitting the same Put does
-// not double-apply. Because the write path is idempotent, an overwrite with a
-// distinct seq bumps the version by exactly one per logical write.
+// TestExactlyOnceRetry verifies the session table dedups a retried write: the client keeps its (ClientID,
+// Seq), so re-submitting the same Put does not double-apply.
 func TestExactlyOnceRetry(t *testing.T) {
 	h := startHarness(t)
 	c, err := client.Dial(h.addrs)

@@ -7,10 +7,7 @@ import (
 	"github.com/iwang-1/parallax-kv/raft"
 )
 
-// This file renders sim payloads into canonical, deterministic detail
-// strings for the trace. Nothing here reads a clock, iterates a map, or
-// dereferences a pointer whose identity could vary between runs — only the
-// stable, value-typed contents of messages and commands are rendered.
+// This file renders sim payloads into canonical, deterministic detail strings for the trace.
 
 func msgTypeName(t raft.MessageType) string {
 	switch t {
@@ -43,10 +40,8 @@ func msgTypeName(t raft.MessageType) string {
 	}
 }
 
-// renderMessage produces a canonical one-line rendering of a message,
-// including only fields that are deterministic given the run. Entry payload
-// bytes are summarized by count and a content digest so large values do not
-// bloat the trace while still detecting divergence.
+// RenderMessage produces a canonical one-line rendering of a message, including only fields that are
+// deterministic given the run.
 func renderMessage(m raft.Message) string {
 	b := make([]byte, 0, 96)
 	b = append(b, msgTypeName(m.Type)...)
@@ -74,9 +69,8 @@ func renderMessage(m raft.Message) string {
 	return string(b)
 }
 
-// digestEntries folds the term/index/type/data of a slice of entries into
-// one digest, so that two nodes carrying "the same" entries render alike
-// and divergent entries render differently.
+// DigestEntries folds the term/index/type/data of a slice of entries into one digest, so that two nodes
+// carrying "the same" entries render alike and divergent entries render differently.
 func digestEntries(es []raft.Entry) uint64 {
 	var acc uint64 = 1469598103934665603
 	const prime uint64 = 1099511628211

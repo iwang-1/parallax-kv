@@ -1,19 +1,15 @@
 package raft
 
-// readIndexStatus tracks one in-flight ReadIndex request: the commit index
-// recorded when the request was made, the originating request message, and
-// the set of peers that have confirmed leadership by acknowledging the
-// heartbeat that carried this request's context.
+// ReadIndexStatus tracks one in-flight ReadIndex request: the commit index recorded when the request was
+// made, the originating request message, and the set of peers that have confirmed leadership by.
 type readIndexStatus struct {
 	index uint64
 	req   Message
 	acks  map[uint64]bool
 }
 
-// readOnly serializes ReadIndex requests. Because a heartbeat quorum
-// confirmation for a later request also confirms all earlier ones, requests
-// are held in FIFO order and released as a batch. The context of the most
-// recent request is the confirmation token broadcast in heartbeats.
+// ReadOnly serializes ReadIndex requests. Because a heartbeat quorum confirmation for a later request also
+// confirms all earlier ones, requests are held in fifo order and released as a batch.
 type readOnly struct {
 	pendingReadIndex map[string]*readIndexStatus
 	readIndexQueue   []string

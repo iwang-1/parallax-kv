@@ -9,12 +9,7 @@ import (
 	"github.com/iwang-1/parallax-kv/raft"
 )
 
-// driveLoop is the single-threaded owner of the raft node, the state
-// machine, and all waiter bookkeeping. Every input — ticks, inbound peer
-// messages, and client requests — is serialized through this one select,
-// which is exactly the discipline the pure core requires (it is not safe for
-// concurrent use). This mirrors the simulator's single-goroutine event loop;
-// the only differences are the real clock and real I/O.
+// DriveLoop is the single-threaded owner of the raft node, the state machine, and all waiter bookkeeping.
 func (s *Server) driveLoop(ctx context.Context) error {
 	ticker := time.NewTicker(time.Duration(s.cfg.TickIntervalMillis) * time.Millisecond)
 	defer ticker.Stop()
@@ -47,9 +42,8 @@ func (s *Server) driveLoop(ctx context.Context) error {
 	}
 }
 
-// handleRequest steps a client request into the core and registers its
-// waiter. A proposal/read into a non-leader returns ErrNotLeader, which is
-// answered immediately with a redirect hint.
+// HandleRequest steps a client request into the core and registers its waiter. A proposal/read into a
+// non-leader returns ErrNotLeader, which is answered immediately with a redirect hint.
 func (s *Server) handleRequest(req *request) {
 	switch req.kind {
 	case reqPropose:
@@ -73,13 +67,8 @@ func (s *Server) handleRequest(req *request) {
 	}
 }
 
-// drain processes all pending Ready batches, enforcing the persist-before-
-// send ordering the core's contract requires:
-//
-//  1. persist HardState / Entries / Snapshot durably (fsync if MustSync),
-//  2. send Messages,
-//  3. apply Snapshot then CommittedEntries; release ReadStates,
-//  4. Advance.
+// Drain processes all pending Ready batches, enforcing the persist-before- send ordering the core's
+// contract requires: 1. persist HardState / Entries / Snapshot durably (fsync if MustSync), 2. send Messages, 3..
 func (s *Server) drain() error {
 	// A leadership change invalidates in-flight client waiters: a deposed
 	// leader can neither commit its proposals nor safely serve its reads.
@@ -88,9 +77,8 @@ func (s *Server) drain() error {
 	for s.node.HasReady() {
 		rd := s.node.Ready()
 
-		// (1) Persist. Order matters: snapshot compacts the prefix, entries
-		// extend it, hard state records term/vote/commit. A single fsync
-		// (group commit) covers the whole batch when MustSync is set.
+		// (1) Persist. Order matters: snapshot compacts the prefix, entries extend it, hard state records
+		// term/vote/commit.
 		if rd.Snapshot != nil {
 			if err := s.stor.ApplySnapshot(*rd.Snapshot); err != nil && err != raft.ErrCompacted {
 				return err
@@ -142,9 +130,8 @@ func (s *Server) drain() error {
 	return nil
 }
 
-// checkLeadership fails all in-flight client waiters when this node stops
-// being the leader: their proposals will never commit here and their reads
-// must not be served from a deposed leader's stale state.
+// CheckLeadership fails all in-flight client waiters when this node stops being the leader: their proposals
+// will never commit here and their reads must not be served from a deposed leader's stale state.
 func (s *Server) checkLeadership() {
 	isLeader := s.node.State() == raft.StateLeader
 	if s.prevLeader && !isLeader {
@@ -172,9 +159,8 @@ func (s *Server) applyEntry(e raft.Entry) {
 	if e.Type == raft.EntryNormal && len(e.Data) > 0 {
 		cmd, err := kv.DecodeCommand(e.Data)
 		if err != nil {
-			// A committed entry always decodes; a failure is a programming
-			// error, but panicking here would take down a node recovering a
-			// valid log, so we skip it (the waiter times out and retries).
+			// A committed entry always decodes; a failure is a programming error, but panicking here would take down
+			// a node recovering a valid log, so we skip it (the waiter times out and retries).
 			return
 		}
 		res := s.sm.Apply(cmd)

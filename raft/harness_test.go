@@ -6,10 +6,8 @@ import (
 	"testing"
 )
 
-// testStorage is a minimal in-memory LogStorage for core unit tests. It lives
-// in the raft test package to avoid an import cycle with storage/mem (which
-// itself imports raft). Index 1 is the first log index; there is no snapshot
-// support here (snapshot storage is exercised in storage/mem's own tests).
+// TestStorage is a minimal in-memory LogStorage for core unit tests. It lives in the raft test package to
+// avoid an import cycle with storage/mem (which itself imports raft).
 type testStorage struct {
 	hard    HardState
 	ents    []Entry // ents[i] has index i+1
@@ -118,9 +116,8 @@ func (r *raft) drainMsgs() []Message {
 	return ms
 }
 
-// network is a minimal, single-goroutine message router for multi-node
-// tests. It is deterministic: messages are delivered in send order and peers
-// iterated in sorted ID order.
+// Network is a minimal, single-goroutine message router for multi-node tests. It is deterministic: messages
+// are delivered in send order and peers iterated in sorted ID order.
 type network struct {
 	t     *testing.T
 	peers map[uint64]*raft
@@ -154,9 +151,8 @@ func (nw *network) isolate(id uint64) { nw.isolated[id] = true }
 // recover reconnects a previously isolated node.
 func (nw *network) recover(id uint64) { delete(nw.isolated, id) }
 
-// deliverAll routes every queued message to its destination until the
-// network quiesces (no node has pending output). Isolated nodes' traffic is
-// dropped.
+// DeliverAll routes every queued message to its destination until the network quiesces (no node has pending
+// output).
 func (nw *network) deliverAll() {
 	for step := 0; step < 10000; step++ {
 		var batch []Message

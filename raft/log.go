@@ -2,14 +2,8 @@ package raft
 
 import "fmt"
 
-// unstable holds log entries (and an optional incoming snapshot) that the
-// core has produced or received but that the driver has not yet persisted to
-// LogStorage. The core serves reads (term lookups, replication) from unstable
-// first and falls back to storage, so replication never blocks on the driver's
-// fsync. Advance shrinks unstable as the driver confirms persistence.
-//
-// entries[i] has log index offset+i. When snapshot != nil it covers the log
-// through snapshot.Metadata.Index and offset == snapshot.Metadata.Index+1.
+// Unstable holds log entries (and an optional incoming snapshot) that the core has produced or received but
+// that the driver has not yet persisted to LogStorage.
 type unstable struct {
 	snapshot *Snapshot
 	entries  []Entry
@@ -56,9 +50,7 @@ func (u *unstable) maybeTerm(i uint64) (uint64, bool) {
 	return u.entries[i-u.offset].Term, true
 }
 
-// stableTo drops entries through index i (with matching term t) now that the
-// driver has persisted them. A term mismatch means the entries were replaced
-// by a later truncation, so nothing is dropped.
+// StableTo drops entries through index i (with matching term t) now that the driver has persisted them.
 func (u *unstable) stableTo(i, t uint64) {
 	gt, ok := u.maybeTerm(i)
 	if !ok || gt != t || i < u.offset {
@@ -105,9 +97,8 @@ func (u *unstable) truncateAppend(ents []Entry) {
 	}
 }
 
-// raftLog is the core's logical view of the replicated log: the durable
-// prefix in storage, plus the unstable tail, plus the committed and applied
-// watermarks. It performs no I/O; all durable writes happen in the driver.
+// RaftLog is the core's logical view of the replicated log: the durable prefix in storage, plus the
+// unstable tail, plus the committed and applied watermarks.
 type raftLog struct {
 	storage   LogStorage
 	unstable  unstable
@@ -204,9 +195,8 @@ func (l *raftLog) append(ents ...Entry) uint64 {
 	return l.lastIndex()
 }
 
-// findConflict returns the index of the first entry in ents whose term does
-// not match this log (or that extends past it), or 0 if there is no conflict
-// and no new entries.
+// FindConflict returns the index of the first entry in ents whose term does not match this log (or that
+// extends past it), or 0 if there is no conflict and no new entries.
 func (l *raftLog) findConflict(ents []Entry) uint64 {
 	for _, e := range ents {
 		if !l.matchTerm(e.Index, e.Term) {
@@ -216,9 +206,7 @@ func (l *raftLog) findConflict(ents []Entry) uint64 {
 	return 0
 }
 
-// maybeAppend attempts to splice an AppendEntries payload. index/logTerm are
-// the entry preceding ents. It returns the index of the last new entry and
-// true on success, or 0/false if the preceding entry does not match.
+// MaybeAppend attempts to splice an AppendEntries payload. index/logTerm are the entry preceding ents.
 func (l *raftLog) maybeAppend(index, logTerm, committed uint64, ents []Entry) (uint64, bool) {
 	if !l.matchTerm(index, logTerm) {
 		return 0, false
@@ -270,9 +258,8 @@ func (l *raftLog) restore(s Snapshot) {
 	l.unstable.restore(s)
 }
 
-// slice returns entries in [lo, hi), drawing from unstable and storage as
-// needed. It panics on out-of-bounds requests (a core bug), returning
-// ErrCompacted only when the range dips below the first available index.
+// Slice returns entries in [lo, hi), drawing from unstable and storage as needed. It panics on
+// out-of-bounds requests (a core bug), returning ErrCompacted only when the range dips below the first available index.
 func (l *raftLog) slice(lo, hi uint64) ([]Entry, error) {
 	if lo >= hi {
 		return nil, nil
@@ -338,9 +325,8 @@ func (l *raftLog) isUpToDate(lasti, term uint64) bool {
 	return term > l.lastTerm() || (term == l.lastTerm() && lasti >= l.lastIndex())
 }
 
-// maybeCommit advances the commit index to maxIndex if that entry is from
-// term (the Figure-8 current-term restriction is enforced by the caller
-// passing its current term). It returns whether commit advanced.
+// MaybeCommit advances the commit index to maxIndex if that entry is from term (the Figure-8 current-term
+// restriction is enforced by the caller passing its current term).
 func (l *raftLog) maybeCommit(maxIndex, term uint64) bool {
 	if maxIndex > l.committed {
 		if t, _ := l.term(maxIndex); t == term {

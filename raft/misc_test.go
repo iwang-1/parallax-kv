@@ -70,9 +70,8 @@ func TestTermBasedBacktracking(t *testing.T) {
 	}
 }
 
-// TestSnapshotRestoreExtensionPoint exercises the InstallSnapshot receive
-// path (an S3 extension point wired in S1): a follower far behind installs a
-// snapshot that advances its commit index and last index.
+// TestSnapshotRestoreExtensionPoint exercises the InstallSnapshot receive path (an S3 extension point wired
+// in S1): a follower far behind installs a snapshot that advances its commit index and last index.
 func TestSnapshotRestoreExtensionPoint(t *testing.T) {
 	f := newTestRaft(t, 2, []uint64{1, 2, 3}, false)
 	f.becomeFollower(4, 1)

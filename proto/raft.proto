@@ -1,7 +1,5 @@
-// Peer-to-peer transport for raft messages: a single Step RPC carrying the
-// Message union, mirroring the core's Node.Step input. Wire enum values
-// track the Go constants in package raft; transport/grpc owns the
-// conversion in both directions.
+// Peer-to-peer transport for raft messages: a single Step RPC carrying the Message union, mirroring the
+// core's Node.Step input.
 syntax = "proto3";
 
 package parallax.raft;
@@ -70,9 +68,8 @@ message StepRequest {
   repeated Message messages = 1;
 }
 
-// StepResponse is empty: raft responses are messages in their own right,
-// delivered via the receiver's own Step calls, never via this RPC's
-// return path.
+// StepResponse is empty: raft responses are messages in their own right, delivered via the receiver's own
+// Step calls, never via this RPC's return path.
 message StepResponse {}
 
 // RaftTransport is the peer-to-peer service.

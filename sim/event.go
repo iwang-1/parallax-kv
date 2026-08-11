@@ -2,25 +2,18 @@ package sim
 
 import "container/heap"
 
-// event is one scheduled action on the simulator timeline. Events are
-// ordered by (At, Seq): At is the virtual time the action fires, and Seq is
-// a monotonically increasing insertion counter that breaks ties in FIFO
-// order. Because ordering never depends on the wall clock, map iteration,
-// or goroutine scheduling, the sequence of dispatched events is a pure
-// function of what was scheduled — the bedrock of the determinism gate.
+// Event is one scheduled action on the simulator timeline. Events are ordered by (At, Seq): At is the
+// virtual time the action fires, and Seq is a monotonically increasing insertion counter that breaks ties in fifo order.
 type event struct {
 	at   VirtualTime
 	seq  uint64
 	kind string // trace label, e.g. "tick", "deliver", "client"
 	node uint64 // node the event pertains to (0 if none)
-	// detail is a canonical rendering of the event payload, recorded into
-	// the trace. It must not contain pointers, wall-clock values, or
-	// map-ordered data.
+	// Detail is a canonical rendering of the event payload, recorded into the trace. It must not contain
+	// pointers, wall-clock values, or map-ordered data.
 	detail string
-	// action performs the event's effect. Determinism comes from the
-	// scheduling order, not from the closure contents; actions must
-	// themselves avoid nondeterminism (they draw only from the run's one
-	// seeded RNG).
+	// Action performs the event's effect. Determinism comes from the scheduling order, not from the closure
+	// contents; actions must themselves avoid nondeterminism (they draw only from the run's one seeded rng).
 	action func()
 }
 

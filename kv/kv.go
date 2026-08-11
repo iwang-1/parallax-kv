@@ -1,12 +1,5 @@
-// Package kv is the replicated application state machine: a string-keyed
-// store with Get/Put/Delete/CAS, plus the client session table that gives
-// commands exactly-once apply semantics.
-//
-// The state machine is deterministic and does no I/O: Apply(cmd) -> Result
-// is a pure transition, so every replica that applies the same command
-// sequence reaches the same state. Sessions are part of that state and are
-// serialized into snapshots with it — a replica restored from a snapshot
-// dedups retried commands exactly like one that applied the whole log.
+// Package kv is the replicated application state machine: a string-keyed store with Get/Put/Delete/cas,
+// plus the client session table that gives commands exactly-once apply semantics.
 package kv
 
 import (
@@ -15,25 +8,22 @@ import (
 	"sort"
 )
 
-// ValueRecord is the stored value for a key. Version increments on every
-// successful mutation of the key (starting at 1) and is returned to
-// clients for observability; CAS compares by value bytes, not version.
+// ValueRecord is the stored value for a key. Version increments on every successful mutation of the key
+// (starting at 1) and is returned to clients for observability; cas compares by value bytes, not version.
 type ValueRecord struct {
 	Value   []byte
 	Version uint64
 }
 
-// Session is the per-client dedup record: the highest sequence number
-// applied for the client and the result it produced, replayed verbatim
-// when a retry of that sequence arrives.
+// Session is the per-client dedup record: the highest sequence number applied for the client and the result
+// it produced, replayed verbatim when a retry of that sequence arrives.
 type Session struct {
 	LastSeq    uint64
 	LastResult Result
 }
 
-// StateMachine is the KV store plus session table. It is not safe for
-// concurrent use; the apply loop serializes access (reads under ReadIndex
-// are also funneled through the apply-loop owner).
+// StateMachine is the KV store plus session table. It is not safe for concurrent use; the apply loop
+// serializes access (reads under ReadIndex are also funneled through the apply-loop owner).
 type StateMachine struct {
 	data     map[string]ValueRecord
 	sessions map[uint64]Session
@@ -48,12 +38,6 @@ func NewStateMachine() *StateMachine {
 }
 
 // Apply executes one committed command and returns its result.
-//
-// Dedup contract: if cmd.Seq equals the client's session LastSeq, the
-// recorded LastResult is returned without re-executing; if cmd.Seq is
-// lower it is a stale retry and a StatusStaleSeq result is returned;
-// otherwise the command executes and the session advances. Clients issue
-// strictly increasing Seq per ClientID with at most one command in flight.
 func (m *StateMachine) Apply(cmd Command) Result {
 	if sess, ok := m.sessions[cmd.ClientID]; ok {
 		switch {
@@ -70,9 +54,7 @@ func (m *StateMachine) Apply(cmd Command) Result {
 	return res.clone()
 }
 
-// execute performs cmd against the store, unconditionally (dedup has
-// already been resolved by Apply). The returned Result owns its Value
-// slice: it never aliases caller input or store state.
+// Execute performs cmd against the store, unconditionally (dedup has already been resolved by Apply).
 func (m *StateMachine) execute(cmd Command) Result {
 	switch cmd.Op {
 	case OpGet:
@@ -93,9 +75,8 @@ func (m *StateMachine) execute(cmd Command) Result {
 	case OpCAS:
 		return m.cas(cmd)
 	default:
-		// Commands enter Apply only from committed log entries that
-		// DecodeCommand validated; an unknown op here is a programming
-		// error, and panicking is deterministic across replicas.
+		// Commands enter Apply only from committed log entries that DecodeCommand validated; an unknown op here
+		// is a programming error, and panicking is deterministic across replicas.
 		panic(fmt.Sprintf("kv: invalid op %d in committed command", cmd.Op))
 	}
 }
@@ -134,9 +115,8 @@ func (r Result) clone() Result {
 	return r
 }
 
-// Read serves a read-only Get against current state, bypassing the session
-// table (reads are idempotent; linearizability comes from ReadIndex, not
-// dedup).
+// Read serves a read-only Get against current state, bypassing the session table (reads are idempotent;
+// linearizability comes from ReadIndex, not dedup).
 func (m *StateMachine) Read(key string) Result {
 	return m.get(key)
 }
@@ -144,15 +124,8 @@ func (m *StateMachine) Read(key string) Result {
 // snapshotEncodingVersion is the first byte of every snapshot payload.
 const snapshotEncodingVersion byte = 1
 
-// Snapshot serializes the full state (data + sessions) deterministically:
-// identical states produce identical bytes (keys emitted in sorted order).
-//
-// Layout (big-endian): version(1) |
-// sessionCount(8) | per session (clientID ascending): clientID(8),
-// lastSeq(8), result{status(1), value presence(1)[+len(4)+bytes],
-// version(8)} |
-// keyCount(8) | per key (key ascending): keyLen(4)+key,
-// value presence(1)[+len(4)+bytes], version(8).
+// Snapshot serializes the full state (data + sessions) deterministically: identical states produce
+// identical bytes (keys emitted in sorted order).
 func (m *StateMachine) Snapshot() ([]byte, error) {
 	buf := []byte{snapshotEncodingVersion}
 

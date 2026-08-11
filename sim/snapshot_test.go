@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// countInstallSnapshot returns how many MsgInstallSnapshot deliveries the
-// trace recorded (the deliver detail is the rendered message, which begins
-// with the message type name).
+// CountInstallSnapshot returns how many MsgInstallSnapshot deliveries the trace recorded (the deliver
+// detail is the rendered message, which begins with the message type name).
 func countInstallSnapshot(trace []TraceEvent) int {
 	n := 0
 	for _, e := range trace {
@@ -18,22 +17,16 @@ func countInstallSnapshot(trace []TraceEvent) int {
 	return n
 }
 
-// snapshotConfig is a low-fault config that enables aggressive compaction: a
-// small SnapshotEntries threshold so nodes snapshot and truncate their logs
-// repeatedly over a short run, exercising the compaction + restore path
-// end-to-end on the real consensus core.
+// SnapshotConfig is a low-fault config that enables aggressive compaction: a small SnapshotEntries
+// threshold so nodes snapshot and truncate their logs repeatedly over a short run, exercising the compaction +.
 func snapshotConfig(seed uint64) Config {
 	c := smokeConfig(seed)
 	c.SnapshotEntries = 8
 	return c
 }
 
-// TestSnapshotCompaction is the S3 step-1 headline: with compaction enabled,
-// nodes snapshot their state machine and truncate the covered log prefix while
-// a workload runs. It asserts that (1) at least one node actually compacted
-// (its FirstIndex advanced past 1, so a prefix was discarded), (2) the run
-// stayed free of invariant violations, and (3) the client history remained
-// linearizable. Compaction must not weaken any safety property.
+// TestSnapshotCompaction is the S3 step-1 headline: with compaction enabled, nodes snapshot their state
+// machine and truncate the covered log prefix while a workload runs.
 func TestSnapshotCompaction(t *testing.T) {
 	s, err := New(snapshotConfig(1))
 	if err != nil {
@@ -70,13 +63,8 @@ func TestSnapshotCompaction(t *testing.T) {
 		maxFirst, len(s.History().Operations()))
 }
 
-// TestSnapshotRestartRestore proves the crash-recovery-from-snapshot path: a
-// node compacts (so part of its state lives only in a snapshot, not the log),
-// then crashes and restarts. On restart it must restore its state machine from
-// the persisted snapshot and resume applying from the compacted prefix rather
-// than replaying from index 0 — and the cluster must remain linearizable with
-// no applied-prefix divergence (both checked every step by the invariant
-// checker, which RunUntil surfaces).
+// TestSnapshotRestartRestore proves the crash-recovery-from-snapshot path: a node compacts (so part of its
+// state lives only in a snapshot, not the log), then crashes and restarts.
 func TestSnapshotRestartRestore(t *testing.T) {
 	s, err := New(snapshotConfig(7))
 	if err != nil {
@@ -129,15 +117,8 @@ func TestSnapshotRestartRestore(t *testing.T) {
 		target, snapIndex)
 }
 
-// TestInstallSnapshotCatchUp exercises the leader->follower InstallSnapshot
-// flow: a follower is crashed and held down while the leader keeps committing
-// and compacting, so the leader discards (into its own snapshot) the very
-// entries the follower still needs. When the follower restarts, the entries
-// preceding its next index no longer exist as individual log entries on the
-// leader, so the leader must ship an InstallSnapshot rather than an
-// AppendEntries. The test asserts an InstallSnapshot was actually delivered
-// and that the follower caught up to the cluster's applied frontier, all while
-// staying linearizable.
+// TestInstallSnapshotCatchUp exercises the leader->follower InstallSnapshot flow: a follower is crashed and
+// held down while the leader keeps committing and compacting, so the leader discards.
 func TestInstallSnapshotCatchUp(t *testing.T) {
 	c := snapshotConfig(3)
 	// Clean network so the flow is crisp and the follower falls behind purely
@@ -196,9 +177,8 @@ func TestInstallSnapshotCatchUp(t *testing.T) {
 		t.Fatal("expected at least one InstallSnapshot delivery, saw none")
 	}
 
-	// (2) The restarted follower caught up to near the cluster frontier: its
-	// applied index reached at least the leader's snapshot index (it installed
-	// the snapshot) and it advanced beyond it.
+	// (2) The restarted follower caught up to near the cluster frontier: its applied index reached at least
+	// the leader's snapshot index (it installed the snapshot) and it advanced beyond it.
 	frontier := uint64(0)
 	for _, id := range s.peers {
 		ns := s.nodes[id]
@@ -225,16 +205,8 @@ func TestInstallSnapshotCatchUp(t *testing.T) {
 		victim, vns.applied, frontier, countInstallSnapshot(s.Trace()))
 }
 
-// TestSnapshotUnderPartitionUsesInstallSnapshot asserts that the
-// snapshot-under-partition nemesis scenario actually exercises the
-// InstallSnapshot flow: isolating a follower long enough for the majority to
-// compact past it means that on heal the follower can only be caught up by an
-// InstallSnapshot. If this ever stops holding (e.g. the hold window no longer
-// outlasts a compaction cycle) the scenario would silently degrade into a
-// plain minority partition, so we guard it explicitly. Also confirms the run
-// stays linearizable, which TestScenarioSmoke/Regression already cover but is
-// asserted here alongside the InstallSnapshot evidence for a self-contained
-// signal.
+// TestSnapshotUnderPartitionUsesInstallSnapshot asserts that the snapshot-under-partition nemesis scenario
+// actually exercises the InstallSnapshot flow: isolating a follower long enough for the majority to.
 func TestSnapshotUnderPartitionUsesInstallSnapshot(t *testing.T) {
 	saw := false
 	for _, seed := range []uint64{1, 2, 3, 7} {
@@ -258,10 +230,8 @@ func TestSnapshotUnderPartitionUsesInstallSnapshot(t *testing.T) {
 	}
 }
 
-// TestSnapshotDeterminism proves compaction did not leak nondeterminism: with
-// SnapshotEntries set, the same seed must still produce byte-identical trace
-// hashes across two runs. Compaction is scheduled off the applied index (no
-// RNG draw), so it must not perturb the determinism gate.
+// TestSnapshotDeterminism proves compaction did not leak nondeterminism: with SnapshotEntries set, the same
+// seed must still produce byte-identical trace hashes across two runs.
 func TestSnapshotDeterminism(t *testing.T) {
 	seeds := []uint64{1, 2, 3, 7, 0xC0FFEE}
 	run := func(seed uint64) (string, int) {

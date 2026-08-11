@@ -1,9 +1,5 @@
-// Package grpc implements the production transport: the peer-to-peer
-// RaftTransport service (a single Step RPC carrying batched Messages) and
-// the client-facing KVService (Get/Put/Delete/Cas with session dedup
-// fields and leader redirect). Wire types live in proto/raftpb and
-// proto/kvpb; this package owns the conversions to and from the raft
-// package's native types.
+// Package grpc implements the production transport: the peer-to-peer RaftTransport service (a single Step
+// RPC carrying batched Messages) and the client-facing KVService.
 package grpc
 
 import (
@@ -21,17 +17,15 @@ import (
 	"github.com/iwang-1/parallax-kv/transport"
 )
 
-// outboundQueue bounds the per-peer send backlog. Raft tolerates message
-// loss by design, so a peer that falls behind has its excess sends dropped
-// rather than blocking the sender's drive loop.
+// OutboundQueue bounds the per-peer send backlog. Raft tolerates message loss by design, so a peer that
+// falls behind has its excess sends dropped rather than blocking the sender's drive loop.
 const outboundQueue = 256
 
 // recvQueue bounds the inbound message buffer handed to the drive loop.
 const recvQueue = 1024
 
-// PeerTransport is the gRPC transport.Transport: it maintains one client
-// connection per peer for outbound sends and serves the RaftTransport
-// service for inbound messages.
+// PeerTransport is the gRPC transport.Transport: it maintains one client connection per peer for outbound
+// sends and serves the RaftTransport service for inbound messages.
 type PeerTransport struct {
 	raftpb.UnimplementedRaftTransportServer
 
@@ -50,18 +44,16 @@ type PeerTransport struct {
 
 var _ transport.Transport = (*PeerTransport)(nil)
 
-// peerSender owns one peer's outbound path: a buffered queue drained by a
-// single worker goroutine that lazily dials and sends. Isolating each peer
-// means a slow or unreachable peer never blocks sends to the others.
+// PeerSender owns one peer's outbound path: a buffered queue drained by a single worker goroutine that
+// lazily dials and sends.
 type peerSender struct {
 	addr string
 	ch   chan []raft.Message
 	done chan struct{}
 }
 
-// NewPeerTransport creates a transport for node self, binds the inbound
-// RaftTransport service on the self entry of peers, and dials the remaining
-// peers lazily on first send.
+// NewPeerTransport creates a transport for node self, binds the inbound RaftTransport service on the self
+// entry of peers, and dials the remaining peers lazily on first send.
 func NewPeerTransport(self uint64, peers map[uint64]string) (*PeerTransport, error) {
 	addr, ok := peers[self]
 	if !ok {
@@ -88,9 +80,8 @@ func NewPeerTransport(self uint64, peers map[uint64]string) (*PeerTransport, err
 // configured address used port 0).
 func (t *PeerTransport) Addr() string { return t.lis.Addr().String() }
 
-// Step implements raftpb.RaftTransportServer: it delivers every message in
-// the request to the local drive loop via Recv. Delivery is best-effort — a
-// full inbound buffer drops rather than blocks, since raft tolerates loss.
+// Step implements raftpb.RaftTransportServer: it delivers every message in the request to the local drive
+// loop via Recv.
 func (t *PeerTransport) Step(_ context.Context, req *raftpb.StepRequest) (*raftpb.StepResponse, error) {
 	for _, pm := range req.GetMessages() {
 		m := fromProto(pm)
@@ -104,9 +95,8 @@ func (t *PeerTransport) Step(_ context.Context, req *raftpb.StepRequest) (*raftp
 	return &raftpb.StepResponse{}, nil
 }
 
-// Send implements transport.Transport. It groups messages by destination and
-// hands each group to that peer's sender queue. It is fire-and-forget and
-// never blocks the drive loop: a full per-peer queue drops the batch.
+// Send implements transport.Transport. It groups messages by destination and hands each group to that
+// peer's sender queue.
 func (t *PeerTransport) Send(msgs []raft.Message) {
 	if len(msgs) == 0 {
 		return

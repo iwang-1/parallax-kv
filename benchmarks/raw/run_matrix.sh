@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Portable benchmark matrix runner for parallax-kv.
-#
-# The script builds all required binaries, starts an isolated three-process
-# localhost cluster, and writes each run to a new directory. It never appends to
-# the committed evidence files. Override RAW_DIR or PARALLAX_BENCH_WORK_ROOT when
-# a specific destination is required.
+# Portable benchmark matrix runner for parallax-kv. The script builds all required binaries, starts an
+# isolated three-process localhost cluster, and writes each run to a new directory.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

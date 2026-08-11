@@ -5,9 +5,8 @@ import (
 	"github.com/iwang-1/parallax-kv/raft"
 )
 
-// toProto converts a native raft.Message to its wire form. The wire enum
-// values are defined to track the raft.MessageType constants one-for-one, so
-// the conversion is a direct cast.
+// ToProto converts a native raft.Message to its wire form. The wire enum values are defined to track the
+// raft.MessageType constants one-for-one, so the conversion is a direct cast.
 func toProto(m raft.Message) *raftpb.Message {
 	pm := &raftpb.Message{
 		Type:       raftpb.MessageType(m.Type),

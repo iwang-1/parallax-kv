@@ -5,10 +5,7 @@ import "sort"
 // None is the sentinel node ID meaning "no node" (no leader, no vote).
 const None uint64 = 0
 
-// raft is the internal consensus state machine. Node is a thin facade over
-// it. It is pure: no goroutines, no clocks, no I/O, and no map-iteration
-// nondeterminism (peers are iterated in sorted order). All randomness comes
-// from cfg.Rand.
+// Raft is the internal consensus state machine. Node is a thin facade over it.
 type raft struct {
 	cfg Config
 
@@ -95,9 +92,8 @@ func (r *raft) hardState() HardState {
 	return HardState{Term: r.Term, Vote: r.Vote, Commit: r.raftLog.committed}
 }
 
-// send stamps the message with the sender ID and current term (except for
-// PreVote messages, whose term is set explicitly by the caller) and queues it
-// for the next Ready.
+// Send stamps the message with the sender ID and current term (except for PreVote messages, whose term is
+// set explicitly by the caller) and queues it for the next Ready.
 func (r *raft) send(m Message) {
 	m.From = r.id
 	// Requests and responses that carry a term always use the node's term,

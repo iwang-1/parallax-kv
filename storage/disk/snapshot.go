@@ -24,14 +24,8 @@ type snapshotTestHooks struct {
 	beforeTruncationSync     func() error
 }
 
-// Snapshot file format: a single framed record whose payload is
-//
-//	[index uint64][term uint64][dataLen uint32][data ...][flags uint8]
-//
-// wrapped in the same {payloadLen, crc32c} frame as WAL records, so a torn
-// snapshot write is detected on load and ignored. Files are named
-// snap-<index>.snap; the highest intact index wins on recovery. Legacy files
-// without flags remain readable.
+// Snapshot file format: a single framed record whose payload is [index uint64][term uint64][dataLen
+// uint32][data ...][flags uint8] wrapped in the same {payloadLen, crc32c} frame as WAL records, so a torn.
 
 // snapPayload serializes snapshot metadata + data into a record payload
 // (no type tag; snapshot files hold exactly one record).
@@ -85,14 +79,8 @@ func (s *Storage) Snapshot() (raft.Snapshot, error) {
 	return s.snapshot, nil
 }
 
-// ApplySnapshot implements raft.LogStorage. It writes snap to a new snapshot
-// file atomically (tmp + fsync + rename + dir-fsync), then updates the
-// in-memory mirror. Entries above the snapshot are retained only when the
-// existing entry at its boundary has the same term. A stale snapshot (index <=
-// the current snapshot) is rejected with raft.ErrCompacted.
-//
-// A boundary mismatch is recorded and fsynced in the WAL after the snapshot
-// file is durable, preventing recovery from replaying the divergent suffix.
+// ApplySnapshot implements raft.LogStorage. It writes snap to a new snapshot file atomically (tmp + fsync +
+// rename + dir-fsync), then updates the in-memory mirror.
 func (s *Storage) ApplySnapshot(snap raft.Snapshot) error {
 	if snap.Metadata.Index <= s.offset() {
 		return raft.ErrCompacted
@@ -171,9 +159,7 @@ func (s *Storage) writeSnapshotFile(snap raft.Snapshot, truncateSuffix bool) err
 	return fsyncDir(s.dir)
 }
 
-// loadLatestSnapshot finds the newest intact snapshot file and loads it into
-// the in-memory mirror. Torn/corrupt snapshot files are skipped in favor of
-// the next-newest intact one. It is called once, at Open, before WAL replay.
+// LoadLatestSnapshot finds the newest intact snapshot file and loads it into the in-memory mirror.
 func (s *Storage) loadLatestSnapshot() error {
 	ents, err := os.ReadDir(s.dir)
 	if err != nil {

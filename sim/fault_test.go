@@ -18,11 +18,8 @@ func countKind(trace []TraceEvent, kind string) int {
 	return n
 }
 
-// quietConfig is a config with a clean network and single-node cluster
-// (so the mock's lowest-ID leader is the only node) — used for tests that
-// want to observe a specific fault in isolation rather than background
-// churn. It keeps drop/dup off so the only events are the ones the test
-// injects.
+// QuietConfig is a config with a clean network and single-node cluster (so the mock's lowest-ID leader is
+// the only node) — used for tests that want to observe a specific fault in isolation rather than background churn.
 func quietConfig(seed uint64, nodes int) Config {
 	c := baseConfig(seed)
 	c.Nodes = nodes
@@ -31,9 +28,8 @@ func quietConfig(seed uint64, nodes int) Config {
 	return c
 }
 
-// TestPartitionBlocksCrossGroupMessages installs a partition that isolates
-// the mock leader from the followers and asserts that follower replication
-// stalls: cross-group MsgAppend deliveries do not advance follower logs.
+// TestPartitionBlocksCrossGroupMessages installs a partition that isolates the mock leader from the
+// followers and asserts that follower replication stalls: cross-group MsgAppend deliveries do not advance follower logs.
 func TestPartitionBlocksCrossGroupMessages(t *testing.T) {
 	cfg := quietConfig(3, 3)
 	s := newMockSim(t, cfg)
@@ -44,9 +40,8 @@ func TestPartitionBlocksCrossGroupMessages(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 
-	// The leader (node 1) can still commit locally (single-node quorum in
-	// the mock), but followers 2 and 3 must not have applied anything,
-	// since every MsgAppend crosses the partition boundary and is dropped.
+	// The leader (node 1) can still commit locally (single-node quorum in the mock), but followers 2 and 3
+	// must not have applied anything, since every MsgAppend crosses the partition boundary and is dropped.
 	for _, id := range []uint64{2, 3} {
 		if got := len(s.nodes[id].appliedLog); got != 0 {
 			t.Fatalf("follower %d applied %d entries despite partition", id, got)
@@ -86,9 +81,8 @@ func TestHealRestoresReplication(t *testing.T) {
 	}
 }
 
-// TestCrashKeepsPersistedRestartRecovers crashes a follower, confirms it
-// applies nothing while down, then restarts it and confirms it recovers its
-// persisted prefix and resumes.
+// TestCrashKeepsPersistedRestartRecovers crashes a follower, confirms it applies nothing while down, then
+// restarts it and confirms it recovers its persisted prefix and resumes.
 func TestCrashKeepsPersistedRestartRecovers(t *testing.T) {
 	cfg := quietConfig(9, 3)
 	s := newMockSim(t, cfg)
@@ -127,9 +121,8 @@ func TestCrashKeepsPersistedRestartRecovers(t *testing.T) {
 	}
 }
 
-// TestMessageHookDropsSelectively verifies a scenario hook can drop a chosen
-// message class deterministically. Here it drops all MsgAppend to node 3,
-// which must then apply nothing while node 2 keeps up.
+// TestMessageHookDropsSelectively verifies a scenario hook can drop a chosen message class
+// deterministically.
 func TestMessageHookDropsSelectively(t *testing.T) {
 	cfg := quietConfig(11, 3)
 	s := newMockSim(t, cfg)
@@ -150,9 +143,8 @@ func TestMessageHookDropsSelectively(t *testing.T) {
 	}
 }
 
-// TestFaultRunsAreDeterministic confirms that a run peppered with fault
-// injections at fixed virtual times still replays bit-for-bit — the faults
-// are part of the deterministic script.
+// TestFaultRunsAreDeterministic confirms that a run peppered with fault injections at fixed virtual times
+// still replays bit-for-bit — the faults are part of the deterministic script.
 func TestFaultRunsAreDeterministic(t *testing.T) {
 	script := func() string {
 		s := newMockSim(t, baseConfig(0x5EED))
@@ -174,9 +166,8 @@ func TestFaultRunsAreDeterministic(t *testing.T) {
 	}
 }
 
-// TestReplaySeedInError confirms invariant-failure errors carry the replay
-// seed. We force a failure by feeding the checker a divergent applied log
-// directly (a synthetic harness-level test of the error path).
+// TestReplaySeedInError confirms invariant-failure errors carry the replay seed. We force a failure by
+// feeding the checker a divergent applied log directly (a synthetic harness-level test of the error path).
 func TestReplaySeedInError(t *testing.T) {
 	iv := newInvariants([]uint64{1, 2})
 	nodes := map[uint64]*nodeState{

@@ -76,9 +76,8 @@ func TestTornTailInEarlierSegmentDropsLaterSegments(t *testing.T) {
 		t.Skipf("need >=3 segments to test orphan drop, got %d", countSegments(t, dir))
 	}
 
-	// Corrupt the LAST byte of the FIRST segment. Recovery must stop there and
-	// discard every later segment (they are orphaned by the crash), so only
-	// entries in the first segment survive.
+	// Corrupt the last byte of the first segment. Recovery must stop there and discard every later segment
+	// (they are orphaned by the crash), so only entries in the first segment survive.
 	seg := activeSegmentPathN(t, dir, 0)
 	data, err := os.ReadFile(seg)
 	if err != nil {

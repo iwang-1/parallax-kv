@@ -371,10 +371,7 @@ func TestRestoreErrors(t *testing.T) {
 		"bad version":      append([]byte{0xff}, valid[1:]...),
 		"trailing garbage": append(append([]byte{}, valid...), 0x00),
 	}
-	// Every strict prefix of a valid snapshot is truncated input. The
-	// count guards use minimum entry sizes, so a snapshot whose sessions
-	// and values are much larger than the minimum ("fat") is also swept:
-	// its prefixes pass the count guards and truncate mid-field instead.
+	// Every strict prefix of a valid snapshot is truncated input.
 	fat, err := func() ([]byte, error) {
 		m := NewStateMachine()
 		big := bytes.Repeat([]byte{0xab}, 64)
@@ -418,10 +415,8 @@ func TestRestoreErrors(t *testing.T) {
 	}
 }
 
-// TestApplyPanicsOnInvalidOp pins the contract that an invalid op in a
-// committed command is a programming error surfaced by a deterministic
-// panic, never a silent no-op (DecodeCommand rejects such commands before
-// they can reach the log).
+// TestApplyPanicsOnInvalidOp pins the contract that an invalid op in a committed command is a programming
+// error surfaced by a deterministic panic, never a silent no-op.
 func TestApplyPanicsOnInvalidOp(t *testing.T) {
 	defer func() {
 		if recover() == nil {
@@ -431,11 +426,8 @@ func TestApplyPanicsOnInvalidOp(t *testing.T) {
 	NewStateMachine().Apply(Command{ClientID: 1, Seq: 1, Op: OpInvalid, Key: "k"})
 }
 
-// TestDeterministicApply is the determinism property: two fresh machines
-// applying the same randomly generated command sequence in the same order
-// reach byte-identical snapshots (hence identical state hashes), and a
-// third machine that restores from a mid-sequence snapshot and applies the
-// remainder converges to the same hash.
+// TestDeterministicApply is the determinism property: two fresh machines applying the same randomly
+// generated command sequence in the same order reach byte-identical snapshots (hence identical state hashes), and.
 func TestDeterministicApply(t *testing.T) {
 	const nCmds = 2000
 	rng := rand.New(rand.NewSource(0xDE7E12A))

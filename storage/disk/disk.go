@@ -1,25 +1,4 @@
-// Package disk is the production LogStorage: a segmented write-ahead log
-// plus snapshot files.
-//
-// WAL format: append-only segment files (wal-<seq>.seg) of length-prefixed,
-// CRC32C-framed records (frame = {payloadLen, crc32c} header + payload). A
-// record's payload is a type tag followed by a type-specific body; the log
-// carries entry appends, hard-state updates, and explicit suffix truncations.
-// The WAL is a logical redo log: replaying every record in order — an entry
-// record installs its entry at its index (truncating any conflicting suffix),
-// a hard-state record overwrites the hard state, and a truncation record drops
-// entries above its index — reconstructs the durable state. Conflicting
-// appends truncate implicitly; snapshot boundary mismatches use an explicit
-// record because no replacement entries may follow immediately.
-//
-// Durability is group commit: writes are buffered in memory and flushed by a
-// single fsync per Ready batch (Sync), covering every record the batch wrote
-// — this is where write throughput comes from (see docs/DESIGN_NOTES.md).
-//
-// Recovery scans segments in order, verifying CRCs; a torn tail (a partial or
-// corrupt final record from a mid-write crash) marks the logical end of the
-// log and is truncated, never trusted. Snapshots are written atomically: tmp
-// file, fsync, rename, fsync parent directory.
+// Package disk is the production LogStorage: a segmented write-ahead log plus snapshot files.
 package disk
 
 import (
@@ -52,11 +31,7 @@ type Storage struct {
 	segSize int64
 	segSeq  uint64 // sequence number of the active segment
 
-	// noSync, when set, makes Sync write the buffered records to the segment
-	// but skip the durability fsync. This is the UNSAFE benchmark mode: it
-	// measures the throughput ceiling with the durability barrier removed, to
-	// quantify what group-commit fsync costs. It is NEVER used in production;
-	// a crash can lose acknowledged writes.
+	// NoSync, when set, makes Sync write the buffered records to the segment but skip the durability fsync.
 	noSync bool
 }
 
@@ -66,10 +41,8 @@ func (s *Storage) DisableSync() { s.noSync = true }
 
 var _ raft.LogStorage = (*Storage)(nil)
 
-// maxSegmentSize triggers rotation to a fresh segment on the next Sync once
-// the active segment reaches this size. It is a var (not a const) only so
-// tests can shrink it to exercise multi-segment rotation and recovery; it is
-// never mutated in production.
+// MaxSegmentSize triggers rotation to a fresh segment on the next Sync once the active segment reaches this
+// size.
 var maxSegmentSize int64 = 16 << 20 // 16 MiB
 
 // offset is the index of the last entry covered by the snapshot.
@@ -87,11 +60,8 @@ func (s *Storage) Close() error {
 	return err
 }
 
-// AppendEntries implements raft.LogStorage. It updates the in-memory log and
-// buffers a record per entry; the records are not durable until Sync. Entries
-// must be contiguous with the existing log; a conflicting suffix is truncated
-// first. Entries at or below the snapshot index are dropped as already
-// durable.
+// AppendEntries implements raft.LogStorage. It updates the in-memory log and buffers a record per entry;
+// the records are not durable until Sync.
 func (s *Storage) AppendEntries(entries []raft.Entry) error {
 	if len(entries) == 0 {
 		return nil

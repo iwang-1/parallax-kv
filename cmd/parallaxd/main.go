@@ -1,18 +1,5 @@
-// Command parallaxd runs one parallax-kv node: the raft core driven by the
-// production runtime (real clock, disk WAL, gRPC transport).
-//
-// Usage:
-//
-//	parallaxd --id 1 \
-//	          --peers 1=localhost:7101,2=localhost:7102,3=localhost:7103 \
-//	          --data-dir /var/lib/parallax/1 \
-//	          --listen localhost:8101 \
-//	          --client-peers 1=localhost:8101,2=localhost:8102,3=localhost:8103
-//
-// --peers is the peer-RPC address map (must include this node's --id).
-// --listen is this node's client-facing KVService address. --client-peers is
-// optional: it lets leader-redirect responses carry the leader's client
-// address so clients can jump straight to it (without it, clients round-robin).
+// Command parallaxd runs one parallax-kv node: the raft core driven by the production runtime (real clock,
+// disk WAL, gRPC transport).
 package main
 
 import (

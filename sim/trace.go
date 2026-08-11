@@ -7,17 +7,7 @@ import (
 	"strconv"
 )
 
-// recorder accumulates the run's canonical event trace. The trace, and its
-// SHA-256 hash, are the determinism-gate artifact: two runs of the same
-// Config must produce byte-identical traces, so any stray wall-clock read,
-// map-iteration-order dependence, or goroutine leak into the sim path
-// changes the hash and is caught mechanically.
-//
-// Canonical form: every event is serialized to a fixed-width, endian-fixed
-// byte record with no pointers and no Go map iteration. The hash is folded
-// incrementally so recording a long run does not retain the whole trace
-// merely to hash it — but the events are also kept so failures can be
-// dumped and replayed.
+// Recorder accumulates the run's canonical event trace.
 type recorder struct {
 	events []TraceEvent
 	// hasher is the running SHA-256 state.
@@ -43,10 +33,8 @@ func (r *recorder) record(e TraceEvent) {
 	_, _ = r.hasher.Write(canonicalEvent(e))
 }
 
-// canonicalEvent renders one event to its canonical byte form. Integers are
-// big-endian fixed-width; strings are length-prefixed. This is intentionally
-// not the human-readable form (that is TraceEvent.String); it exists solely
-// to make the hash total and unambiguous.
+// CanonicalEvent renders one event to its canonical byte form. Integers are big-endian fixed-width; strings
+// are length-prefixed.
 func canonicalEvent(e TraceEvent) []byte {
 	// Sized to the common case; grows as needed.
 	buf := make([]byte, 0, 32+len(e.Kind)+len(e.Detail))
@@ -76,9 +64,7 @@ func (r *recorder) hash() string {
 	return hex.EncodeToString(sum)
 }
 
-// String renders a trace event in a stable, human-readable one-line form
-// (used in failure dumps). It is derived only from the event's fields, so
-// it is itself deterministic.
+// String renders a trace event in a stable, human-readable one-line form (used in failure dumps).
 func (e TraceEvent) String() string {
 	// at=<t> seq=<n> kind=<k> node=<id> <detail>
 	b := make([]byte, 0, 48+len(e.Kind)+len(e.Detail))

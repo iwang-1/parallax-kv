@@ -10,9 +10,8 @@ import (
 	"github.com/iwang-1/parallax-kv/raft"
 )
 
-// Open opens (creating dir if needed) the WAL and snapshot state and runs
-// recovery, returning a Storage whose in-memory mirror reflects the durable
-// state on disk.
+// Open opens (creating dir if needed) the WAL and snapshot state and runs recovery, returning a Storage
+// whose in-memory mirror reflects the durable state on disk.
 func Open(dir string) (*Storage, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("disk: mkdir %s: %w", dir, err)
@@ -35,9 +34,8 @@ func Open(dir string) (*Storage, error) {
 			return nil, err
 		}
 		if torn {
-			// The log logically ends inside this segment; any later
-			// segments are orphaned by the crash and must be discarded so
-			// their records are never replayed.
+			// The log logically ends inside this segment; any later segments are orphaned by the crash and must be
+			// discarded so their records are never replayed.
 			if err := s.removeSegments(segs[i+1:]); err != nil {
 				return nil, err
 			}
@@ -53,9 +51,8 @@ func Open(dir string) (*Storage, error) {
 		s.entries = nil
 	}
 
-	// Open (or create) the active segment for appending. Recovery may have
-	// found a torn tail and rewritten a segment; either way we append to the
-	// highest-numbered segment, creating the first one if the dir was empty.
+	// Open (or create) the active segment for appending. Recovery may have found a torn tail and rewritten a
+	// segment; either way we append to the highest-numbered segment, creating the first one if the dir was empty.
 	if err := s.openActiveSegment(segs); err != nil {
 		return nil, err
 	}
@@ -103,10 +100,7 @@ func (s *Storage) listSegments() ([]string, error) {
 	return segs, nil
 }
 
-// replaySegment applies every intact record in a segment to the in-memory
-// mirror. On encountering a torn/corrupt frame it truncates the file at the
-// last good boundary, reports torn=true, and stops (that frame is the logical
-// end of the log).
+// ReplaySegment applies every intact record in a segment to the in-memory mirror.
 func (s *Storage) replaySegment(name string) (torn bool, err error) {
 	path := filepath.Join(s.dir, name)
 	data, err := os.ReadFile(path)
@@ -121,9 +115,8 @@ func (s *Storage) replaySegment(name string) (torn bool, err error) {
 			return true, s.truncateSegment(path, int64(off))
 		}
 		if aerr := s.applyRecord(payload); aerr != nil {
-			// A record that frames correctly (CRC-valid) but fails to
-			// decode indicates real corruption, not a torn tail; still
-			// treat it as end-of-log to stay available.
+			// A record that frames correctly (crc-valid) but fails to decode indicates real corruption, not a torn
+			// tail; still treat it as end-of-log to stay available.
 			return true, s.truncateSegment(path, int64(off))
 		}
 		off += n
@@ -261,10 +254,7 @@ func (s *Storage) rotateSegment(seq uint64) error {
 	return fsyncDir(s.dir)
 }
 
-// Sync flushes all records buffered since the last Sync with a single fsync —
-// the group-commit point, called once per Ready batch (when Ready.MustSync)
-// before messages are sent. It rotates to a fresh segment first if the active
-// one has grown past maxSegmentSize.
+// Sync flushes all records buffered since the last Sync with a single fsync.
 func (s *Storage) Sync() error {
 	return s.syncBuffered(!s.noSync)
 }

@@ -7,9 +7,8 @@ import (
 	"github.com/iwang-1/parallax-kv/kv"
 )
 
-// TestInvokeCompleteRecordsWindow checks the basic record lifecycle: an
-// invoked-then-completed operation lands in Operations with its call/return
-// window and I/O, and is no longer pending.
+// TestInvokeCompleteRecordsWindow checks the basic record lifecycle: an invoked-then-completed operation
+// lands in Operations with its call/return window and I/O, and is no longer pending.
 func TestInvokeCompleteRecordsWindow(t *testing.T) {
 	h := NewHistory()
 	cmd := kv.Command{ClientID: 1, Seq: 1, Op: kv.OpPut, Key: "k0", Value: []byte("v")}
@@ -35,9 +34,8 @@ func TestInvokeCompleteRecordsWindow(t *testing.T) {
 	}
 }
 
-// TestPendingOperationsStayPending confirms never-completed operations
-// (crashed client / lost response) remain pending and are not surfaced as
-// completed operations.
+// TestPendingOperationsStayPending confirms never-completed operations (crashed client / lost response)
+// remain pending and are not surfaced as completed operations.
 func TestPendingOperationsStayPending(t *testing.T) {
 	h := NewHistory()
 	h.Invoke(1, kv.Command{ClientID: 1, Seq: 1, Op: kv.OpGet, Key: "k0"}, 10)
@@ -93,10 +91,8 @@ func checkOps(t *testing.T, ops []Operation) porcupine.CheckResult {
 	return res
 }
 
-// TestModelAcceptsLinearizableHistory feeds a concurrent-but-linearizable
-// history: two clients write the same key in disjoint windows and a later read
-// observes the second write. A valid serialization exists, so the model must
-// return Ok.
+// TestModelAcceptsLinearizableHistory feeds a concurrent-but-linearizable history: two clients write the
+// same key in disjoint windows and a later read observes the second write.
 func TestModelAcceptsLinearizableHistory(t *testing.T) {
 	ops := []Operation{
 		opPut(1, "k", "a", 1, 0, 10),
@@ -108,11 +104,8 @@ func TestModelAcceptsLinearizableHistory(t *testing.T) {
 	}
 }
 
-// TestModelRejectsStaleRead is the strictness guard: a read that returns an
-// OLD value after a strictly-later write committed cannot be linearized. If
-// the model accepted this it would be vacuous. The write [0,10] finishes
-// before the read [20,30] begins, yet the read observes the pre-write value —
-// no serialization places the read before the write, so it must be Illegal.
+// TestModelRejectsStaleRead is the strictness guard: a read that returns an old value after a
+// strictly-later write committed cannot be linearized.
 func TestModelRejectsStaleRead(t *testing.T) {
 	ops := []Operation{
 		opPut(1, "k", "a", 1, 0, 10),
@@ -124,11 +117,8 @@ func TestModelRejectsStaleRead(t *testing.T) {
 	}
 }
 
-// TestModelPendingWriteMayNotTakeEffect confirms an indeterminate (never
-// completed) write does not force an effect: a lost write is followed by a
-// read that returns the PRE-write value, which must remain linearizable
-// because the pending write is free to be ordered after the read (or to have
-// never taken effect).
+// TestModelPendingWriteMayNotTakeEffect confirms an indeterminate (never completed) write does not force an
+// effect: a lost write is followed by a read that returns the pre-write value, which must remain.
 func TestModelPendingWriteMayNotTakeEffect(t *testing.T) {
 	h := NewHistory()
 	i0 := h.Invoke(1, kv.Command{ClientID: 1, Op: kv.OpPut, Key: "k", Value: []byte("a")}, 0)

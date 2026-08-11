@@ -1,9 +1,4 @@
-// Package client is the leader-chasing KV client shared by parallaxctl and
-// parallax-bench. It holds one gRPC connection per configured address, tries
-// the last-known leader first, and follows not_leader redirects (by address
-// when hinted, else round-robin) until an operation is served or attempts
-// run out. Every mutation carries a per-client (ClientID, Seq): retries
-// reuse the same Seq so the server's session table dedups them.
+// Package client is the leader-chasing KV client shared by parallaxctl and parallax-bench.
 package client
 
 import (
@@ -20,11 +15,7 @@ import (
 	"github.com/iwang-1/parallax-kv/proto/kvpb"
 )
 
-// clientIDCounter hands out client session IDs. It is seeded from a random
-// 48-bit base at process start so that two independent processes — e.g. two
-// one-shot parallaxctl invocations — do not collide on the same (ClientID,
-// Seq) pair, which the server's exactly-once session table would otherwise
-// mistake for a retry and answer from cache without executing.
+// ClientIDCounter hands out client session IDs.
 var clientIDCounter = randomIDBase()
 
 // randomIDBase returns a random session-ID base in the high 48 bits, leaving
@@ -231,9 +222,8 @@ func (c *Client) Cas(ctx context.Context, key string, expect, value []byte, expe
 	return CasResult{}, last
 }
 
-// sleepBackoff waits a short, capped interval between retries (used only on
-// hard RPC errors, e.g. a node down mid-failover). It returns false if ctx
-// expired during the wait.
+// SleepBackoff waits a short, capped interval between retries (used only on hard RPC errors, e.g. a node
+// down mid-failover).
 func sleepBackoff(ctx context.Context, try int) bool {
 	d := time.Duration(10*(try+1)) * time.Millisecond
 	if d > 200*time.Millisecond {

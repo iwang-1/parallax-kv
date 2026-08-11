@@ -7,10 +7,8 @@ import (
 	"github.com/iwang-1/parallax-kv/raft"
 )
 
-// client is one closed-loop virtual client: it issues a single operation,
-// waits for its result, thinks for a random interval, then issues the next.
-// "Closed-loop" means at most one operation is in flight per client, which
-// is exactly the (ClientID, Seq) discipline the kv session table dedups on.
+// Client is one closed-loop virtual client: it issues a single operation, waits for its result, thinks for
+// a random interval, then issues the next. "Closed-loop" means at most one operation is in flight per.
 type client struct {
 	id         uint64 // kv ClientID (distinct from node IDs)
 	seq        uint64 // last issued sequence number
@@ -26,9 +24,8 @@ type client struct {
 	attempt uint64
 }
 
-// startWorkload creates the virtual clients and schedules each one's first
-// operation, staggered so they do not all fire at the same virtual instant
-// (which would still be deterministic but less representative).
+// StartWorkload creates the virtual clients and schedules each one's first operation, staggered so they do
+// not all fire at the same virtual instant (which would still be deterministic but less representative).
 func (s *Simulator) startWorkload() {
 	n := s.cfg.Workload.Clients
 	s.clients = make([]*client, 0, n)
@@ -62,9 +59,8 @@ func (s *Simulator) issue(c *client) {
 	s.submit(c)
 }
 
-// submit routes the client's current operation to a node, following leader
-// redirects, and arms a retry timer so a lost proposal or a leaderless
-// interval eventually makes progress.
+// Submit routes the client's current operation to a node, following leader redirects, and arms a retry
+// timer so a lost proposal or a leaderless interval eventually makes progress.
 func (s *Simulator) submit(c *client) {
 	c.attempt++
 	if c.cmd.Op == kv.OpGet {
@@ -132,9 +128,8 @@ func (s *Simulator) submitRead(c *client) {
 	}
 }
 
-// candidateOrder returns node IDs to try in order: the leader hint first,
-// then the remaining nodes in ascending ID order. Deterministic by
-// construction (no map iteration).
+// CandidateOrder returns node IDs to try in order: the leader hint first, then the remaining nodes in
+// ascending ID order.
 func (s *Simulator) candidateOrder(c *client) []uint64 {
 	order := make([]uint64, 0, len(s.peers))
 	if c.leaderHint != 0 {
@@ -148,11 +143,8 @@ func (s *Simulator) candidateOrder(c *client) []uint64 {
 	return order
 }
 
-// completeIfLeader completes the matching client's write when the current
-// leader applies its committed command. Only the leader answers clients, so
-// a follower applying the same entry for its own state does not complete the
-// operation, and once completed the cleared pending flag prevents any
-// double-completion from a later duplicate apply.
+// CompleteIfLeader completes the matching client's write when the current leader applies its committed
+// command.
 func (s *Simulator) completeIfLeader(ns *nodeState, cmd kv.Command, res kv.Result) {
 	if ns.node == nil || ns.node.State() != raft.StateLeader {
 		return
@@ -167,9 +159,8 @@ func (s *Simulator) completeIfLeader(ns *nodeState, cmd kv.Command, res kv.Resul
 	s.finish(c, res)
 }
 
-// releaseRead records a released ReadState. If the node's applied index has
-// already reached the read index the read is served immediately; otherwise
-// it is buffered and served when applied catches up (servePendingReads).
+// ReleaseRead records a released ReadState. If the node's applied index has already reached the read index
+// the read is served immediately; otherwise it is buffered and served when applied catches up (servePendingReads).
 func (s *Simulator) releaseRead(ns *nodeState, rs raft.ReadState) {
 	if ns.applied >= rs.Index {
 		s.serveRead(ns, rs)
@@ -217,9 +208,8 @@ func (s *Simulator) serveRead(ns *nodeState, rs raft.ReadState) {
 	s.finish(c, res)
 }
 
-// finish completes a client's outstanding operation: it records the return
-// in the history and schedules the client's next operation after a think
-// interval.
+// Finish completes a client's outstanding operation: it records the return in the history and schedules the
+// client's next operation after a think interval.
 func (s *Simulator) finish(c *client, res kv.Result) {
 	s.hist.Complete(c.histID, res, int64(s.now))
 	s.recordControl("return", c.id, renderResult(res))

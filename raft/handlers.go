@@ -96,9 +96,8 @@ func (r *raft) handleAppend(m Message) {
 	})
 }
 
-// findConflictByTerm walks back from index to the first entry whose term is
-// at most term, returning that index and its term — the follower's best guess
-// at where the logs could agree.
+// FindConflictByTerm walks back from index to the first entry whose term is at most term, returning that
+// index and its term — the follower's best guess at where the logs could agree.
 func (r *raft) findConflictByTerm(index, term uint64) (uint64, uint64) {
 	for index > 0 {
 		t, err := r.raftLog.term(index)
@@ -193,9 +192,8 @@ func (r *raft) decrHint(m Message) uint64 {
 	return hint
 }
 
-// handleHeartbeatResp records a heartbeat ack, releasing any ReadIndex
-// requests whose leadership is now confirmed by a quorum, and nudges lagging
-// followers.
+// HandleHeartbeatResp records a heartbeat ack, releasing any ReadIndex requests whose leadership is now
+// confirmed by a quorum, and nudges lagging followers.
 func (r *raft) handleHeartbeatResp(m Message) {
 	pr := r.prs[m.From]
 	if pr != nil && pr.Match < r.raftLog.lastIndex() {

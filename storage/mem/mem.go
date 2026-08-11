@@ -1,8 +1,4 @@
-// Package mem provides the in-memory LogStorage used by the deterministic
-// simulator. It models durability: state written through the LogStorage
-// interface is "persisted" and survives a simulated Crash/Restart, while
-// everything else about the node is discarded — exactly the split a real
-// crash imposes.
+// Package mem provides the in-memory LogStorage used by the deterministic simulator.
 package mem
 
 import (
@@ -31,11 +27,8 @@ func (s *Storage) offset() uint64 {
 	return s.snapshot.Metadata.Index
 }
 
-// AppendEntries implements raft.LogStorage. Incoming entries must be
-// contiguous with the existing log; a conflicting suffix (an incoming index
-// that already exists) is truncated before the new entries are stored.
-// Entries at or below the snapshot index are silently dropped as already
-// durable.
+// AppendEntries implements raft.LogStorage. Incoming entries must be contiguous with the existing log; a
+// conflicting suffix (an incoming index that already exists) is truncated before the new entries are stored.
 func (s *Storage) AppendEntries(entries []raft.Entry) error {
 	if len(entries) == 0 {
 		return nil
@@ -120,9 +113,7 @@ func (s *Storage) LastIndex() (uint64, error) {
 	return s.offset() + uint64(len(s.entries)), nil
 }
 
-// ApplySnapshot implements raft.LogStorage. It installs snap, discarding
-// entries it covers. A stale snapshot (index <= the current snapshot) is
-// rejected with raft.ErrCompacted.
+// ApplySnapshot implements raft.LogStorage. It installs snap, discarding entries it covers.
 func (s *Storage) ApplySnapshot(snap raft.Snapshot) error {
 	if snap.Metadata.Index <= s.offset() {
 		return raft.ErrCompacted
@@ -146,10 +137,7 @@ func (s *Storage) Snapshot() (raft.Snapshot, error) {
 	return s.snapshot, nil
 }
 
-// Compact discards entries through index (they remain represented by the
-// snapshot). It is a simulator hook for compaction scenarios and only
-// updates the snapshot metadata; the snapshot Data is left untouched, so
-// callers that need snapshot content must ApplySnapshot instead.
+// Compact discards entries through index (they remain represented by the snapshot).
 func (s *Storage) Compact(index uint64) error {
 	off := s.offset()
 	if index <= off {

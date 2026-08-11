@@ -1,14 +1,5 @@
-// Package e2e drives a REAL parallax-kv cluster: it builds the parallaxd
-// binary, starts three OS processes on localhost, exercises them through the
-// public client, then SIGKILLs the leader and verifies the cluster fails over
-// without losing a single acknowledged write.
-//
-// This is deliberately a separate binary-level test (not in-process): it is
-// the closest reproducible stand-in for a real deployment, catching wiring
-// that in-process tests cannot — process flags, listener binding, transport
-// dial/redial, and durable recovery. Race coverage of the server internals
-// lives in the in-process test (server package), since child processes escape
-// the -race instrumentation of the test binary.
+// Package e2e drives a real parallax-kv cluster: it builds the parallaxd binary, starts three OS processes
+// on localhost, exercises them through the public client, then SIGKILLs the leader and verifies the.
 package e2e
 
 import (
@@ -96,9 +87,8 @@ func startNode(t *testing.T, bin string, n *node, peerMap, clientMap string) {
 		t.Fatalf("create log: %v", err)
 	}
 	defer logf.Close()
-	// Fast timers keep the test short while staying well above the ~1ms
-	// loopback round trip: 10ms tick, heartbeat every 3 ticks (30ms),
-	// election timeout 15-30 ticks (150-300ms).
+	// Fast timers keep the test short while staying well above the ~1ms loopback round trip: 10ms tick,
+	// heartbeat every 3 ticks (30ms), election timeout 15-30 ticks (150-300ms).
 	n.cmd = exec.Command(bin,
 		"--id", fmt.Sprint(n.id),
 		"--peers", peerMap,
@@ -123,9 +113,8 @@ func (n *node) kill() {
 	}
 }
 
-// findLeader probes every node's client address directly and returns the node
-// whose response does not carry not_leader. It retries until deadline because
-// an election may still be in progress.
+// FindLeader probes every node's client address directly and returns the node whose response does not carry
+// not_leader.
 func findLeader(t *testing.T, nodes []*node, deadline time.Time) *node {
 	t.Helper()
 	for time.Now().Before(deadline) {
@@ -171,10 +160,8 @@ func dumpLogs(t *testing.T, nodes []*node) {
 	}
 }
 
-// TestClusterFailoverNoAckedWriteLoss is the S4 definition-of-done test: a
-// real 3-process cluster, write set A, SIGKILL the leader, write set B against
-// the survivors, then verify every acknowledged write from BOTH sets is still
-// readable and a single new leader is serving. No acked write may be lost.
+// TestClusterFailoverNoAckedWriteLoss is the S4 definition-of-done test: a real 3-process cluster, write
+// set A, sigkill the leader, write set B against the survivors, then verify every acknowledged write from.
 func TestClusterFailoverNoAckedWriteLoss(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping real-process cluster test in -short mode")
@@ -243,9 +230,7 @@ func TestClusterFailoverNoAckedWriteLoss(t *testing.T) {
 	}
 	t.Logf("set B: writes acknowledged, %d total acked", len(acked))
 
-	// Verify: every acknowledged write from BOTH sets is still readable with
-	// its exact acknowledged value. This is the durability guarantee — a
-	// committed (acked) write survives a leader crash.
+	// Verify: every acknowledged write from both sets is still readable with its exact acknowledged value.
 	for key, want := range acked {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		r, err := c.Get(ctx, key)

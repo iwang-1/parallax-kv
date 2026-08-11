@@ -48,9 +48,8 @@ func TestReplicationHappyPath(t *testing.T) {
 	}
 }
 
-// TestAppendConflictBacktracking verifies a follower with a divergent suffix
-// is repaired: the leader backtracks Next until the logs agree, then
-// overwrites the follower's stale entries.
+// TestAppendConflictBacktracking verifies a follower with a divergent suffix is repaired: the leader
+// backtracks Next until the logs agree, then overwrites the follower's stale entries.
 func TestAppendConflictBacktracking(t *testing.T) {
 	// Follower with a stale divergent log: three entries at term 1..1..1.
 	f := newTestRaft(t, 2, []uint64{1, 2, 3}, false)

@@ -5,11 +5,7 @@ import (
 	"fmt"
 )
 
-// Low-level binary codec helpers shared by the Command encoding and the
-// StateMachine snapshot format. All integers are big-endian. Byte slices
-// are encoded with a presence flag so nil and empty round-trip distinctly
-// (the distinction is semantic for Command.Expect: nil means "key must be
-// absent", empty means "value must be empty").
+// Low-level binary codec helpers shared by the Command encoding and the StateMachine snapshot format.
 
 const (
 	flagAbsent  byte = 0
