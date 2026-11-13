@@ -185,3 +185,60 @@ func putWithRetry(ctx context.Context, c *client.Client, key, val string) (clien
 	}
 	return client.PutResult{}, last
 }
+
+// TestConcurrentWritesShareFsyncs checks that the drive loop batches queued input: writes that arrive
+// together are stepped into the same Ready and so share WAL fsyncs, instead of costing one fsync per write
+// on every node.
+func TestConcurrentWritesShareFsyncs(t *testing.T) {
+	h := startHarness(t)
+	ctx := context.Background()
+	// A Client is not safe for concurrent use (it owns one session sequence), so each writer gets its own.
+	const writers, perWriter = 32, 8
+	clients := make([]*client.Client, writers)
+	for w := range clients {
+		c, err := client.Dial(h.addrs)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer c.Close()
+		clients[w] = c
+	}
+	if _, err := putWithRetry(ctx, clients[0], "warmup", "x"); err != nil {
+		t.Fatalf("warmup put: %v", err)
+	}
+
+	totalSyncs := func() uint64 {
+		var n uint64
+		for _, s := range h.servers {
+			n += s.stor.WALSyncs()
+		}
+		return n
+	}
+
+	before := totalSyncs()
+	errs := make(chan error, writers)
+	for w := 0; w < writers; w++ {
+		go func(w int) {
+			for i := 0; i < perWriter; i++ {
+				if _, err := putWithRetry(ctx, clients[w], fmt.Sprintf("k%d-%d", w, i), "v"); err != nil {
+					errs <- err
+					return
+				}
+			}
+			errs <- nil
+		}(w)
+	}
+	for w := 0; w < writers; w++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("put: %v", err)
+		}
+	}
+	syncs := totalSyncs() - before
+	writes := uint64(writers * perWriter)
+	t.Logf("%d writes across 3 nodes took %d WAL fsyncs (%.2f per write)", writes, syncs, float64(syncs)/float64(writes))
+	// Without batching, every write costs at least one fsync on the leader and one on each follower that
+	// acknowledges it: about 3 per write. Require well under one per write across the whole cluster.
+	if syncs >= writes {
+		t.Fatalf("%d writes took %d fsyncs; queued writes are not sharing fsyncs", writes, syncs)
+	}
+}

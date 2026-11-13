@@ -105,8 +105,11 @@ type Server struct {
 	prevLeader   bool
 	readToken    uint64
 	pendingReads []raft.ReadState
-	writeWaiters map[clientKey]chan opResult
-	readWaiters  map[string]readWaiter
+	// pendingProposals holds writes absorbed in the current loop iteration until they are proposed
+	// together (see absorbQueued).
+	pendingProposals []*request
+	writeWaiters     map[clientKey]chan opResult
+	readWaiters      map[string]readWaiter
 
 	clientSrv *stdgrpc.Server
 	clientLis net.Listener

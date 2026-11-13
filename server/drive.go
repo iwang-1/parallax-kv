@@ -30,15 +30,87 @@ func (s *Server) driveLoop(ctx context.Context) error {
 				return nil
 			}
 			_ = s.node.Step(m)
+			if !s.absorbQueued(recv) {
+				return nil
+			}
 			if err := s.drain(); err != nil {
 				return err
 			}
 		case req := <-s.reqCh:
-			s.handleRequest(req)
+			s.queueRequest(req)
+			if !s.absorbQueued(recv) {
+				return nil
+			}
 			if err := s.drain(); err != nil {
 				return err
 			}
 		}
+	}
+}
+
+// maxAbsorb bounds how many already-queued inputs one loop iteration steps into the core before draining,
+// so a steady stream of input cannot postpone persistence and replies indefinitely.
+const maxAbsorb = 256
+
+// absorbQueued steps every client request and peer message that is already waiting, without blocking, so
+// they reach the core before the next drain. Their entries then share one Ready: one storage append, one
+// fsync, and one round of outgoing messages, instead of one of each per input. Consecutive write requests
+// are proposed together as one MsgPropose, so the leader replicates them in one append per follower
+// rather than one overlapping append per write. Inputs are stepped in arrival order: queued proposals are
+// flushed before any peer message or read is stepped. Ordering guarantees are unchanged: drain still
+// persists everything in a Ready before sending any of its messages.
+// It reports false if the transport's receive channel was closed.
+func (s *Server) absorbQueued(recv <-chan raft.Message) bool {
+	defer s.flushProposals()
+	for i := 0; i < maxAbsorb; i++ {
+		select {
+		case req := <-s.reqCh:
+			s.queueRequest(req)
+		case m, ok := <-recv:
+			if !ok {
+				return false
+			}
+			s.flushProposals()
+			_ = s.node.Step(m)
+		default:
+			return true
+		}
+	}
+	return true
+}
+
+// queueRequest holds a write back so it can be proposed together with the writes queued behind it; any
+// other request flushes the held writes first and is then handled immediately.
+func (s *Server) queueRequest(req *request) {
+	if req.kind == reqPropose {
+		s.pendingProposals = append(s.pendingProposals, req)
+		return
+	}
+	s.flushProposals()
+	s.handleRequest(req)
+}
+
+// flushProposals steps all held writes into the core as a single MsgPropose and registers their waiters.
+// If this node is not the leader, every held write is answered with a redirect.
+func (s *Server) flushProposals() {
+	if len(s.pendingProposals) == 0 {
+		return
+	}
+	reqs := s.pendingProposals
+	s.pendingProposals = s.pendingProposals[:0]
+	entries := make([]raft.Entry, len(reqs))
+	for i, req := range reqs {
+		entries[i] = raft.Entry{Type: raft.EntryNormal, Data: kv.EncodeCommand(req.cmd)}
+	}
+	if err := s.node.Step(raft.Message{Type: raft.MsgPropose, Entries: entries}); err != nil {
+		lead := s.node.Leader()
+		for _, req := range reqs {
+			req.resp <- opResult{notLeader: true, leaderID: lead}
+		}
+		return
+	}
+	for _, req := range reqs {
+		s.writeWaiters[clientKey{req.cmd.ClientID, req.cmd.Seq}] = req.resp
 	}
 }
 

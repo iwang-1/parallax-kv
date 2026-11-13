@@ -179,9 +179,63 @@ Reads are ~33x the durable write rate at C=1 (no fsync, no log append) and
 plateau near **~11,100 reads/sec** — the ReadIndex confirmation round and the
 single-goroutine drive loop are the ceiling. p99 stays sub-30 ms even at C=256.
 
+## [W3] Committed writes — batched drive loop (DEFAULT since this change)
+
+**Correction to the [W1] reading above.** The [W1] runs predate input batching:
+the drive loop then drained after every client request and every peer message,
+so each write cost its own fsync on the leader and on each follower, and
+concurrent writes did *not* share a barrier. The ~280 writes/sec plateau was
+that per-input fsync cadence, not a ceiling of group commit. The drive loop now
+takes every already-queued input (up to 256) before draining and proposes
+consecutive writes as one `MsgPropose`, so writes that arrive together share one
+fsync per node and one append per follower (docs/DESIGN_NOTES.md §6).
+
+Same workload as [W1], before and after that change, on one host: Apple M3 Max
+(14 cores), macOS 27, go1.27.4, three `parallaxd` processes on localhost, fresh
+cluster per run, 3 s warmup, 15 s measured window, 3 runs per cell, medians.
+This host's 4 KiB fsync p50 is **3.96 ms** (`scripts/fsync_probe.go`), about 4.5x
+the [W1] host's 0.89 ms, so absolute numbers are not comparable to [W1]; compare
+the two columns with each other.
+
+| Clients | before: writes/s | before: p99 | after: writes/s | after: p99 | throughput |
+|---:|---:|---:|---:|---:|---:|
+| 1   | 76.9  | 17.6 ms   | 76.8    | 18.0 ms | 1.0x  |
+| 8   | 108.3 | 126.9 ms  | 200.1   | 58.7 ms | 1.85x |
+| 64  | 102.0 | 763.7 ms  | 1,407.7 | 60.3 ms | 13.8x |
+| 256 | 91.9  | 4,458 ms  | 5,800.3 | 59.1 ms | 63x   |
+
+Every measured run had **0 errors**. Raw output, including two runs that failed
+while seeding keys before any measurement (one per version) and the rerun of
+each:
+[`raw/W3_batched_apple_m3max.txt`](raw/W3_batched_apple_m3max.txt). The
+"before, 256 clients" rerun failed to seed as well, so that cell is the median
+of 2 runs, not 3.
+
+**Reading the table.** At one client there is nothing to batch, and the two
+versions match. With more clients, the old loop stayed near one write per
+fsync round and its latency grew with the queue (p99 4.5 s at 256 clients).
+The batched loop keeps p99 near 60 ms from 8 to 256 clients while throughput
+grows with concurrency, because each fsync round now carries every write that
+queued during the previous one. An in-process test,
+`server.TestConcurrentWritesShareFsyncs`, counts the effect directly: 256
+concurrent writes cost 570 WAL fsyncs across the three nodes before the change
+(2.23 per write) and 118 after (0.46 per write).
+
+**What it took.** A first version batched inputs but still proposed each write
+as its own `MsgPropose`. That ran at 1,500+ writes/s at 64 clients but produced
+~50,000 client errors per run at 256 clients: each proposal triggered an append
+that re-sent all unacknowledged entries, the per-peer transport queue
+overflowed and dropped batches including heartbeats, and followers started
+elections. Proposing each group of writes as one message fixed it; the table
+above is the fixed version.
+
 ## Headline figures
 
-- **Durable write throughput**: quote the **knee, C=8**: 272
+- **Batched drive loop ([W3])**: on one host, durable write throughput at 64
+  clients rose from 102 to 1,408 writes/s (13.8x) with p99 falling from 764 ms to
+  60 ms; at 256 clients, 92 to 5,800 writes/s with p99 near 60 ms. Fsyncs per write
+  across the cluster fell from 2.23 to 0.46.
+- **Durable write throughput, pre-batching ([W1])**: quote the **knee, C=8**: 272
   committed writes/sec at 40.7 ms p99 (durable, group-commit fsync). If instead
   the peak-throughput figure is preferred, it is 285 writes/sec at C=256, but its
   ~1 s p99 must be disclosed alongside it — the knee is the more honest number.

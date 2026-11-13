@@ -193,9 +193,36 @@ term, vote, and commit index.
 `AppendEntries` and `SetHardState` buffer framed records in memory. `Sync`
 writes the full buffer and performs one fsync for the entire `Ready` batch.
 This is the group-commit boundary: one barrier covers every record already in
-that batch, and no proposal is acknowledged before it succeeds. The production
-loop currently drains after each client request, so it does not deliberately
-queue several leader proposals into one `Ready`.
+that batch, and no proposal is acknowledged before it succeeds.
+
+The production drive loop fills those batches deliberately. After it takes one
+input (a client request or a peer message), it also takes every input that is
+already queued, up to 256, before it drains. Consecutive client writes among
+them are stepped into the core as **one** `MsgPropose` carrying all their
+entries. Two things follow:
+
+- Every node pays one fsync per drained `Ready`, not one per input, so writes
+  that arrive together share a durability barrier on the leader and on each
+  follower.
+- The leader broadcasts one `MsgAppend` per follower for the whole group. An
+  earlier version stepped each write as its own `MsgPropose`; because the leader
+  only advances a follower's `Next` on acknowledgement, each of those proposals
+  re-sent every unacknowledged entry, so a burst of `n` writes produced `n`
+  appends per follower carrying O(n²) entries in total. At 256 clients that
+  overflowed the transport's per-peer queue, which drops a full batch, so
+  heartbeats were lost and followers started elections. Proposing the group as
+  one message removed those failures; the benchmark rows in
+  [`benchmarks/RESULTS.md`](../benchmarks/RESULTS.md) were measured with it.
+
+Ordering is unchanged. Inputs are stepped in arrival order: held writes are
+proposed before any peer message or read request that arrived after them is
+stepped. `drain` still persists every record of a `Ready` before sending any of
+its messages, and a write is acknowledged only after it commits and applies.
+`server.TestConcurrentWritesShareFsyncs` checks the batching: 256 concurrent
+writes on an in-process three-node cluster must take fewer WAL fsyncs than
+writes across the whole cluster. The pre-batching loop needed 570 (2.23 per
+write) in that test and fails it; the batched loop needed 118 (0.46 per
+write).
 
 Recovery scans segments in order. A partial header, short payload, invalid
 length, or CRC mismatch marks a torn tail. The active segment is truncated to

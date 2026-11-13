@@ -22,8 +22,11 @@ database.
   runs** and **2,914,245 completed client operations**, with zero per-step
   invariant violations and zero Porcupine `Illegal` verdicts. See
   [CONSISTENCY_REPORT.md](CONSISTENCY_REPORT.md).
-- **Durable write knee:** **272 writes/s at 41 ms p99** with 8 closed-loop
-  clients on a three-process localhost cluster.
+- **Batched durable writes:** the drive loop proposes queued writes together, so
+  they share fsyncs and replication. On one host, 64 clients went from **102 to
+  1,408 writes/s (13.8x)** with p99 from 764 ms to **60 ms**; 256 clients reach
+  **5,800 writes/s at 59 ms p99**, 0 errors. Fsyncs per write across the cluster
+  fell from 2.23 to 0.46. See [W3](benchmarks/RESULTS.md).
 - **Crash path:** CRC32C-framed WAL records, torn-tail truncation, atomic
   snapshot files, and persist-before-send ordering.
 - **Honest bug accounting:** the soak found zero consensus bugs. A harness
@@ -177,7 +180,23 @@ evidence under a defined fault model, not a formal proof.
 
 ## Durable benchmark
 
-Three local OS processes, 16-byte keys, 128-byte values, 1,000-key space,
+**Batched drive loop (current code).** Before/after on one host (Apple M3 Max,
+macOS 27, 3.96 ms fsync p50), three `parallaxd` processes on localhost, 15 s
+measured window, 3 runs per cell, medians, 0 errors in every measured run:
+
+| Closed-loop clients | before: writes/s | before: p99 | after: writes/s | after: p99 |
+|---:|---:|---:|---:|---:|
+| 1   | 76.9  | 17.6 ms  | 76.8    | 18.0 ms |
+| 8   | 108.3 | 127 ms   | 200.1   | 58.7 ms |
+| 64  | 102.0 | 764 ms   | **1,407.7** | **60.3 ms** |
+| 256 | 91.9  | 4,458 ms | **5,800.3** | **59.1 ms** |
+
+Full table, method and caveats (the "before, 256" cell has 2 valid runs):
+[W3](benchmarks/RESULTS.md). The original measurements below were taken on a
+different host before batching, when each write cost its own fsync on every
+node; the plateau they show was that per-write cadence.
+
+**Pre-batching results (original host).** Three local OS processes, 16-byte keys, 128-byte values, 1,000-key space,
 5-second discarded warmup, 30-second measured window, five repetitions per
 cell. Values below are medians for the default durable mode, which fsyncs all
 records in each write-bearing `Ready` batch before sending dependent messages.
@@ -191,8 +210,8 @@ records in each write-bearing `Ready` batch before sending dependent messages.
 | 64 | 279 | 352 ms |
 | 256 | 285 | 991 ms |
 
-Throughput is effectively flat beyond 8 clients while queueing latency grows,
-so C=8 is the useful knee rather than the maximum-throughput row. A separate
+In that version throughput was effectively flat beyond 8 clients while queueing
+latency grew, so C=8 was the useful knee. A separate
 4 KiB probe on the WAL filesystem measured approximately **0.89 ms fsync
 p50**. Benchmark numbers are host-specific; CI only smoke-tests the real
 three-node path and makes no throughput assertion.
@@ -206,8 +225,9 @@ measure the durability barrier's cost and can lose acknowledged writes.
 
 - This is one static Raft group. There is no sharding or online membership
   change.
-- The production loop drains after each client request; it has a `Ready`-level
-  fsync boundary but does not deliberately coalesce multiple leader proposals.
+- The leader still replicates with one append in flight per proposal group and
+  advances a follower's `Next` only on acknowledgement (no optimistic pipelining),
+  and it fsyncs its own log before sending appends rather than in parallel.
 - Snapshot compaction scheduling is implemented in the simulator, but is not
   wired into the production `/server` runtime. Disk snapshot persistence and
   restore are implemented and unit-tested.

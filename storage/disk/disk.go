@@ -4,6 +4,7 @@ package disk
 import (
 	"fmt"
 	"os"
+	"sync/atomic"
 
 	"github.com/iwang-1/parallax-kv/raft"
 )
@@ -33,7 +34,14 @@ type Storage struct {
 
 	// NoSync, when set, makes Sync write the buffered records to the segment but skip the durability fsync.
 	noSync bool
+
+	// walSyncs counts successful WAL segment fsyncs. Atomic so tests and metrics can read it while the
+	// drive loop writes.
+	walSyncs atomic.Uint64
 }
+
+// WALSyncs returns how many WAL segment fsyncs have completed. Safe to call from any goroutine.
+func (s *Storage) WALSyncs() uint64 { return s.walSyncs.Load() }
 
 // DisableSync switches the storage into the UNSAFE no-fsync mode described on
 // the noSync field. Intended only for the [W2] benchmark variant.

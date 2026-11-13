@@ -277,6 +277,7 @@ func (s *Storage) syncBuffered(durable bool) error {
 		if err := s.seg.Sync(); err != nil {
 			return fmt.Errorf("disk: fsync segment: %w", err)
 		}
+		s.walSyncs.Add(1)
 	}
 	s.segSize += int64(len(s.buf))
 	s.buf = s.buf[:0]
