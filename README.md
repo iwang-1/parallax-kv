@@ -129,6 +129,14 @@ CLUSTER="localhost:8101,localhost:8102,localhost:8103"
 
 ## Correctness evidence
 
+For a focused check of the simulator itself, run the verdict and leader-completeness regressions:
+
+```sh
+go test ./sim -run '^(TestLinearizabilityVerdictMapping|TestLeaderCompleteness.*)$' -v
+```
+
+The [verdict test](sim/linearizability_verdict_test.go) checks how a timeout or violation reaches the caller. The [leader-completeness fixtures](sim/leader_completeness_test.go) exercise missing entries, conflicting entries and entries covered by snapshots.
+
 The deterministic simulator runs a three-node cluster with concurrent
 Get/Put/Delete/CAS workloads while injecting leader partitions, minority
 partitions, crash/restart loops, 30% message loss, duplication and delay,
