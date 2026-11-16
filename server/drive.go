@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"time"
 
 	"github.com/iwang-1/parallax-kv/kv"
@@ -187,6 +188,14 @@ func (s *Server) drain() error {
 			}
 			if rd.Snapshot.Metadata.Index > s.applied {
 				s.applied = rd.Snapshot.Metadata.Index
+				s.appliedIndex.Store(s.applied)
+				s.installedSnapshots.Add(1)
+			}
+			// A snapshot from the leader covers this node's older segments and snapshot files too. It
+			// is durable (persisted in step 1), so reclaim them now rather than at the next local
+			// compaction. CompactWAL is a no-op if the snapshot still relies on a truncation marker.
+			if _, _, err := s.stor.CompactWAL(); err != nil {
+				return fmt.Errorf("server: compact WAL after installed snapshot: %w", err)
 			}
 		}
 		for _, e := range rd.CommittedEntries {
@@ -199,6 +208,46 @@ func (s *Server) drain() error {
 		// (4) Acknowledge.
 		s.node.Advance(raft.PersistAck{})
 	}
+	return s.maybeSnapshot()
+}
+
+// maybeSnapshot compacts the log once the applied index is SnapshotEntries past the last snapshot: it
+// snapshots the state machine at the applied index, installs that as the storage snapshot (trimming the
+// in-memory log prefix), and deletes the WAL segments and older snapshot files it covers. Runs between
+// Readys on the drive loop, which owns the state machine and storage, so the snapshot is exactly the state
+// after applying entry `applied`. A follower that later needs a compacted entry receives InstallSnapshot.
+func (s *Server) maybeSnapshot() error {
+	if s.cfg.SnapshotEntries == 0 {
+		return nil
+	}
+	snap, err := s.stor.Snapshot()
+	if err != nil {
+		return err
+	}
+	base := snap.Metadata.Index
+	if s.applied <= base || s.applied-base < s.cfg.SnapshotEntries {
+		return nil
+	}
+	// The applied entry is committed and durable, so its term is in storage.
+	term, err := s.stor.Term(s.applied)
+	if err != nil {
+		return nil // just covered by an installed snapshot; try again after the next apply
+	}
+	data, err := s.sm.Snapshot()
+	if err != nil {
+		return fmt.Errorf("server: state machine snapshot: %w", err)
+	}
+	newSnap := raft.Snapshot{
+		Metadata: raft.SnapshotMetadata{Index: s.applied, Term: term},
+		Data:     data,
+	}
+	if err := s.stor.ApplySnapshot(newSnap); err != nil && err != raft.ErrCompacted {
+		return fmt.Errorf("server: install snapshot: %w", err)
+	}
+	if _, _, err := s.stor.CompactWAL(); err != nil {
+		return fmt.Errorf("server: compact WAL: %w", err)
+	}
+	s.snapshots.Add(1)
 	return nil
 }
 
@@ -228,6 +277,7 @@ func (s *Server) applyEntry(e raft.Entry) {
 		return
 	}
 	s.applied = e.Index
+	s.appliedIndex.Store(s.applied)
 	if e.Type == raft.EntryNormal && len(e.Data) > 0 {
 		cmd, err := kv.DecodeCommand(e.Data)
 		if err != nil {

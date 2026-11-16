@@ -1,0 +1,39 @@
+# host: Apple M3 Max, macOS 27, go1.27.4; 3 parallaxd on localhost; 64 clients, 30 s write window, 1,000-key space
+# each block: a fresh cluster, then du of each data dir after shutdown, then 5x disk.Open of node 1 (scripts/recoverytime)
+
+### no compaction rep=1  parallaxd flags: --snapshot-entries 0 --wal-segment-bytes 1048576
+  ops (measured)   : 45451
+  errors           : 0
+  throughput       : 1515.0 ops/sec
+  latency p99      : 62.173ms
+node 1: 11464 KiB on disk, 10 segments, 0 snapshot files
+node 2: 12484 KiB on disk, 10 segments, 0 snapshot files
+node 3: 11464 KiB on disk, 10 segments, 0 snapshot files
+recovery: median 6.980041ms (min 6.258083ms, max 8.083334ms) over 5 opens; log entries in memory: 50998 (first 1, last 50998)
+### compaction rep=1  parallaxd flags: --snapshot-entries 10000 --wal-segment-bytes 1048576
+  ops (measured)   : 45547
+  errors           : 0
+  throughput       : 1518.2 ops/sec
+  latency p99      : 63.134ms
+node 1: 1268 KiB on disk, 1 segments, 2 snapshot files
+node 2: 1268 KiB on disk, 1 segments, 2 snapshot files
+node 3: 1268 KiB on disk, 1 segments, 2 snapshot files
+recovery: median 594.875µs (min 511.125µs, max 633.75µs) over 5 opens; log entries in memory: 911 (first 50096, last 51006)
+### no compaction rep=2  parallaxd flags: --snapshot-entries 0 --wal-segment-bytes 1048576
+  ops (measured)   : 45976
+  errors           : 0
+  throughput       : 1532.5 ops/sec
+  latency p99      : 58.078ms
+node 1: 11692 KiB on disk, 10 segments, 0 snapshot files
+node 2: 11688 KiB on disk, 10 segments, 0 snapshot files
+node 3: 10624 KiB on disk, 11 segments, 0 snapshot files
+recovery: median 6.478667ms (min 6.075791ms, max 7.449666ms) over 5 opens; log entries in memory: 51685 (first 1, last 51685)
+### compaction rep=2  parallaxd flags: --snapshot-entries 10000 --wal-segment-bytes 1048576
+  ops (measured)   : 45410
+  errors           : 0
+  throughput       : 1513.7 ops/sec
+  latency p99      : 62.007ms
+node 1: 1272 KiB on disk, 1 segments, 2 snapshot files
+node 2: 1272 KiB on disk, 1 segments, 2 snapshot files
+node 3: 1272 KiB on disk, 1 segments, 2 snapshot files
+recovery: median 717.875µs (min 537.417µs, max 904.166µs) over 5 opens; log entries in memory: 844 (first 50089, last 50932)

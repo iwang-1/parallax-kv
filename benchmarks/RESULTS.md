@@ -229,6 +229,32 @@ overflowed and dropped batches including heartbeats, and followers started
 elections. Proposing each group of writes as one message fixed it; the table
 above is the fixed version.
 
+## [W4] Log compaction — disk use and recovery time
+
+`parallaxd --snapshot-entries N` snapshots every N applied entries and deletes
+the WAL segments and older snapshot files it covers (docs/DESIGN_NOTES.md §10).
+Same host as [W3] (Apple M3 Max, macOS 27, go1.27.4), three `parallaxd`
+processes on localhost, 64 clients, 30 s write window, 1 MiB WAL segments; after
+shutdown, `du` of each data directory and five timed `disk.Open` calls on node 1
+(`go run ./scripts/recoverytime`). Two runs per configuration:
+
+| | writes/s | p99 | node 1 on disk | WAL segments | log entries recovered | `disk.Open` median |
+|---|---:|---:|---:|---:|---:|---:|
+| no compaction, run 1 | 1,515 | 62.2 ms | 11,464 KiB | 10 | 50,998 | 6.98 ms |
+| no compaction, run 2 | 1,533 | 58.1 ms | 11,692 KiB | 10 | 51,685 | 6.48 ms |
+| `--snapshot-entries 10000`, run 1 | 1,518 | 63.1 ms | 1,268 KiB | 1 | 911 | 0.59 ms |
+| `--snapshot-entries 10000`, run 2 | 1,514 | 62.0 ms | 1,272 KiB | 1 | 844 | 0.72 ms |
+
+Raw: [`raw/W4_compaction_apple_m3max.txt`](raw/W4_compaction_apple_m3max.txt).
+
+Without compaction, disk use and recovery work grow with every write, forever.
+With it they are bounded by the snapshot interval: what remains is two snapshot
+files plus the entries since the last snapshot, so the numbers depend on where
+in the cycle the run stopped. These two runs stopped shortly after a snapshot
+(~900 entries past it); an exploratory run that stopped just before one held
+9,863 entries, 3,200 KiB, and recovered in 1.43 ms. Throughput and p99 are the
+same within run-to-run noise.
+
 ## Headline figures
 
 - **Batched drive loop ([W3])**: on one host, durable write throughput at 64

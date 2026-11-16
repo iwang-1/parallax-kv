@@ -38,10 +38,35 @@ type Storage struct {
 	// walSyncs counts successful WAL segment fsyncs. Atomic so tests and metrics can read it while the
 	// drive loop writes.
 	walSyncs atomic.Uint64
+
+	// segMaxIndex maps a segment sequence number to the highest entry index recorded in it (absent: no
+	// entries), so CompactWAL can tell which segments a snapshot fully covers.
+	segMaxIndex map[uint64]uint64
+	// bufMaxIndex is the highest entry index in buf, credited to whichever segment buf is written to.
+	bufMaxIndex uint64
+	// replaySeq is the segment being replayed during Open.
+	replaySeq uint64
+	// segLimit is the size at which the active segment rotates on the next Sync (0: maxSegmentSize).
+	segLimit int64
+	// latestSnapshotTruncated is set when the newest snapshot conflicted with the local log and so relies
+	// on a WAL truncation marker; CompactWAL leaves segments alone while it is set.
+	latestSnapshotTruncated bool
 }
 
 // WALSyncs returns how many WAL segment fsyncs have completed. Safe to call from any goroutine.
 func (s *Storage) WALSyncs() uint64 { return s.walSyncs.Load() }
+
+// SetSegmentLimit sets the WAL segment size at which the active segment rotates on its next Sync. Smaller
+// segments let CompactWAL reclaim space sooner after a snapshot, at the cost of more files. Zero restores
+// the default (16 MiB).
+func (s *Storage) SetSegmentLimit(bytes int64) { s.segLimit = bytes }
+
+func (s *Storage) segmentLimit() int64 {
+	if s.segLimit > 0 {
+		return s.segLimit
+	}
+	return maxSegmentSize
+}
 
 // DisableSync switches the storage into the UNSAFE no-fsync mode described on
 // the noSync field. Intended only for the [W2] benchmark variant.
@@ -91,6 +116,9 @@ func (s *Storage) AppendEntries(entries []raft.Entry) error {
 	s.entries = append(s.entries[:pos], entries...)
 	for i := range entries {
 		s.buf = appendFrame(s.buf, encodeEntry(entries[i]))
+	}
+	if last > s.bufMaxIndex {
+		s.bufMaxIndex = last
 	}
 	return nil
 }

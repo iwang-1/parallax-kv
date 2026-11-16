@@ -29,6 +29,9 @@ func Open(dir string) (*Storage, error) {
 		return nil, err
 	}
 	for i, name := range segs {
+		if s.replaySeq, err = parseSegmentSeq(name); err != nil {
+			return nil, err
+		}
 		torn, err := s.replaySegment(name)
 		if err != nil {
 			return nil, err
@@ -162,6 +165,7 @@ func (s *Storage) applyRecord(payload []byte) error {
 // applyEntryRecord installs a replayed entry at its index, truncating any
 // conflicting suffix (log truncation is implicit in the redo stream).
 func (s *Storage) applyEntryRecord(e raft.Entry) error {
+	s.noteSegmentEntry(s.replaySeq, e.Index)
 	off := s.offset()
 	if e.Index <= off {
 		// Covered by the snapshot; ignore.
@@ -265,13 +269,17 @@ func (s *Storage) syncBuffered(durable bool) error {
 	if len(s.buf) == 0 {
 		return nil
 	}
-	if s.segSize >= maxSegmentSize {
+	if s.segSize >= s.segmentLimit() {
 		if err := s.rotateSegment(s.segSeq + 1); err != nil {
 			return err
 		}
 	}
 	if _, err := s.seg.Write(s.buf); err != nil {
 		return fmt.Errorf("disk: append records: %w", err)
+	}
+	if s.bufMaxIndex > 0 {
+		s.noteSegmentEntry(s.segSeq, s.bufMaxIndex)
+		s.bufMaxIndex = 0
 	}
 	if durable {
 		if err := s.seg.Sync(); err != nil {

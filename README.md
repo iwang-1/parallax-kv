@@ -27,6 +27,13 @@ database.
   1,408 writes/s (13.8x)** with p99 from 764 ms to **60 ms**; 256 clients reach
   **5,800 writes/s at 59 ms p99**, 0 errors. Fsyncs per write across the cluster
   fell from 2.23 to 0.46. See [W3](benchmarks/RESULTS.md).
+- **Log compaction in production:** every node snapshots its state machine every
+  `--snapshot-entries` applied entries and deletes the WAL segments and older
+  snapshot files that the snapshot covers. After ~45,000 writes, a node holds
+  **1.3 MB on disk instead of 11.5 MB** and recovers in **~0.65 ms instead of
+  ~6.7 ms**, with no measurable throughput cost; a follower that falls behind a
+  compacted log catches up through `InstallSnapshot` (tested end to end). See
+  [W4](benchmarks/RESULTS.md).
 - **Crash path:** CRC32C-framed WAL records, torn-tail truncation, atomic
   snapshot files, and persist-before-send ordering.
 - **Honest bug accounting:** the soak found zero consensus bugs. A harness
@@ -228,9 +235,9 @@ measure the durability barrier's cost and can lose acknowledged writes.
 - The leader still replicates with one append in flight per proposal group and
   advances a follower's `Next` only on acknowledgement (no optimistic pipelining),
   and it fsyncs its own log before sending appends rather than in parallel.
-- Snapshot compaction scheduling is implemented in the simulator, but is not
-  wired into the production `/server` runtime. Disk snapshot persistence and
-  restore are implemented and unit-tested.
+- Snapshots are whole-state: the state machine is serialized in full every
+  `--snapshot-entries` applied entries (default 10,000), on the drive loop,
+  which pauses that node for the length of the serialization.
 - `InstallSnapshot` sends the complete snapshot in one message; chunked
   snapshot streaming is not implemented.
 - The gRPC runtime has no TLS, authentication, admission control, or

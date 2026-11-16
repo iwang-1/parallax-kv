@@ -110,6 +110,7 @@ func (s *Storage) ApplySnapshot(snap raft.Snapshot) error {
 	}
 	s.snapshot = snap
 	s.snapshotTruncationPending = truncateSuffix
+	s.latestSnapshotTruncated = truncateSuffix
 
 	if truncateSuffix {
 		s.buf = appendFrame(s.buf, encodeTruncateSuffix(snap.Metadata))
@@ -183,6 +184,7 @@ func (s *Storage) loadLatestSnapshot() error {
 		}
 		s.snapshot = stored.snapshot
 		s.snapshotTruncationPending = stored.truncateSuffix
+		s.latestSnapshotTruncated = stored.truncateSuffix
 		return nil
 	}
 	return nil

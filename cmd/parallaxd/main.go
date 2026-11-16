@@ -33,6 +33,8 @@ func run() error {
 	heartbeatTicks := fs.Int("heartbeat-ticks", 5, "leader heartbeat interval in ticks")
 	electionTicks := fs.Int("election-ticks", 50, "base election timeout in ticks")
 	unsafeNoSync := fs.Bool("unsafe-no-fsync", false, "UNSAFE: skip WAL fsync (benchmark-only; a crash can lose acked writes)")
+	walSegmentBytes := fs.Int64("wal-segment-bytes", 0, "WAL segment size in bytes; compaction frees whole segments (0 = 16 MiB)")
+	snapshotEntries := fs.Uint64("snapshot-entries", 10000, "snapshot and compact the log every N applied entries (0 disables)")
 	_ = fs.Parse(os.Args[1:])
 
 	if *id == 0 {
@@ -68,6 +70,8 @@ func run() error {
 		TickIntervalMillis: *tickMillis,
 		ElectionTicks:      *electionTicks,
 		HeartbeatTicks:     *heartbeatTicks,
+		SnapshotEntries:    *snapshotEntries,
+		WALSegmentBytes:    *walSegmentBytes,
 		UnsafeNoSync:       *unsafeNoSync,
 	}
 	srv, err := server.New(cfg)

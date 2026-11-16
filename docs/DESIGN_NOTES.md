@@ -371,8 +371,24 @@ Snapshot policy stays outside the pure core:
 
 - The KV state machine serializes keys, versions, sessions, and cached results
   in deterministic order.
-- The simulator creates a snapshot after `SnapshotEntries` newly applied
-  entries and applies it to storage, which truncates the covered log prefix.
+- Both the simulator and the production `/server` drive loop create a snapshot
+  after `SnapshotEntries` newly applied entries and apply it to storage, which
+  truncates the covered in-memory log prefix. The server does this between
+  Readys on the drive loop, so the snapshot is exactly the state after applying
+  entry `applied`.
+- `disk.Storage.CompactWAL` then reclaims disk: it deletes the prefix of WAL
+  segments whose entries are all covered by the snapshot (never the active
+  segment), and all but the two newest snapshot files. Two records besides
+  entries live in segments. The hard state is re-appended to the active segment
+  and fsynced first, so the newest term and vote survive (without that, a
+  restarted node came back with term 0 and no vote, which could let it vote
+  twice in one term; `TestCompactWALRemovesCoveredSegmentsAndRecovers` checks
+  this). And a snapshot that conflicted with the local log depends on a WAL
+  truncation marker, so `CompactWAL` does nothing while the newest snapshot is
+  of that kind. Recovery treats a gap after the snapshot index as a torn log,
+  which is why only a fully covered prefix is ever deleted.
+- A follower that installs a snapshot from the leader runs `CompactWAL` right
+  after, so it reclaims its own old segments and snapshot files too.
 - A restart restores the snapshot before applying the remaining committed
   suffix.
 - If a follower's `Next` index falls below the leader's compacted prefix,
@@ -386,10 +402,9 @@ leader-to-follower snapshot catch-up.
 
 ### Deliberate scope limits
 
-- The production `/server` runtime does **not** schedule snapshot compaction.
-  Compaction is currently driver-triggered only in the simulator. Disk
-  snapshot persistence and restore exist and are unit-tested, but periodic
-  production scheduling is not implemented.
+- Snapshots serialize the whole state machine on the drive loop, so a node
+  pauses for that long every `SnapshotEntries` entries; there is no
+  incremental or background snapshotting.
 - A snapshot is sent as one Raft message. Chunked snapshot streaming,
   resumable transfer, flow control, and per-chunk verification are not
   implemented.

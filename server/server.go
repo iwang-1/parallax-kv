@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	stdgrpc "google.golang.org/grpc"
@@ -42,6 +43,13 @@ type Config struct {
 	HeartbeatTicks int
 	// UnsafeNoSync disables the per-Ready WAL fsync. unsafe: a crash can lose acknowledged writes.
 	UnsafeNoSync bool
+	// SnapshotEntries, when positive, snapshots the state machine once the applied index has advanced
+	// this many entries past the last snapshot, then deletes the WAL segments and old snapshot files the
+	// snapshot covers. Zero disables log compaction, and the log grows without bound.
+	SnapshotEntries uint64
+	// WALSegmentBytes, when positive, overrides the 16 MiB WAL segment size. Compaction reclaims space a
+	// whole segment at a time, so smaller segments free disk sooner after each snapshot.
+	WALSegmentBytes int64
 }
 
 func (c *Config) withDefaults() {
@@ -105,6 +113,12 @@ type Server struct {
 	prevLeader   bool
 	readToken    uint64
 	pendingReads []raft.ReadState
+	// snapshots counts completed log compactions (read by tests and metrics from any goroutine).
+	snapshots atomic.Uint64
+	// installedSnapshots counts snapshots received from a leader and applied (InstallSnapshot).
+	installedSnapshots atomic.Uint64
+	// appliedIndex mirrors applied for readers outside the drive loop.
+	appliedIndex atomic.Uint64
 	// pendingProposals holds writes absorbed in the current loop iteration until they are proposed
 	// together (see absorbQueued).
 	pendingProposals []*request
@@ -131,6 +145,7 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("server: open storage: %w", err)
 	}
+	stor.SetSegmentLimit(cfg.WALSegmentBytes)
 	if cfg.UnsafeNoSync {
 		stor.DisableSync()
 	}
@@ -174,6 +189,7 @@ func New(cfg Config) (*Server, error) {
 			}
 		}
 		s.applied = snap.Metadata.Index
+		s.appliedIndex.Store(s.applied)
 	}
 	return s, nil
 }
